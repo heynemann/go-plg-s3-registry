@@ -27,7 +27,7 @@ func TestRewardsExample(t *testing.T) {
 	repo, err := filepath.Abs("../..")
 	require.NoError(t, err)
 	binary, db := filepath.Join(f.dir, "rewards"), filepath.Join(f.dir, "deliveries.sqlite")
-	run(t, repo, nil, "go", "build", "-race", "-o", binary, "./examples/rewards/cmd/rewards")
+	run(t, repo, nil, "go", "build", "-race", "-buildvcs=false", "-o", binary, "./examples/rewards/cmd/rewards")
 	host := f.startRewards(binary, db)
 	host.do("GET", "/readyz", "", http.StatusServiceUnavailable)
 

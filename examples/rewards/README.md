@@ -35,7 +35,7 @@ The [OpenAPI contract](api/openapi.yaml) is the source for these endpoints. Rese
 ## Explore and verify
 
 - [Go contract](contract/contract.go) and [Lua releases](plugins/): the same fixtures are used by the walkthrough and the registry's lifecycle tests. The example packer creates a local proxy for the sample contract; it does not require publishing a Go module.
-- [Rewards app](cmd/rewards/): the CLI writes registry state to Floci, the app reads it through `dataplane`, and SQLite belongs to the example app. The app can be run separately with `go run ./examples/rewards/cmd/rewards --help`.
+- [Rewards app](cmd/rewards/): the CLI writes registry state to Floci, the app reads it through `dataplane`, and SQLite belongs to the example app. Run it separately with `go run -buildvcs=false ./examples/rewards/cmd/rewards --help`. This example-only flag keeps Go from stamping the registry tag as the host contract version; the SDK still checks the exact offline contract version packed by the fixture.
 - Run `go test -race -tags integration ./cmd/plg-registry -run '^TestRewardsExample$'` to exercise the same app over HTTP, including concurrent attempts from separate processes against the same database after rollback.
 
 For real deployments, see the [registry operations guide](../../docs/operations.md).

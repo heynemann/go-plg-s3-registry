@@ -2,25 +2,25 @@
 
 An S3-backed release and rollout registry for [go-plg](https://github.com/heynemann/go-plg). The control plane is the `plg-registry` CLI and a protected execution workflow. The data plane is the `dataplane` Go SDK, which reads the host's environment bucket and invokes exact, verified plugin digests. There is no registry HTTP server, and go-plg does not import or configure the registry. See the [lifecycle spec](https://github.com/heynemann/go-plg-s3-registry/issues/1) and [operations guide](docs/operations.md).
 
-**Release status:** [`v0.1.0` developer preview](docs/releases/v0.1.0.md). Use it with Floci and synthetic data. Live AWS production conformance is deferred; see [compatibility, supported versions and upgrades](docs/compatibility.md).
+**Release status:** [`v0.1.1` developer preview](docs/releases/v0.1.1.md). Use it with Floci and synthetic data. Live AWS production conformance is deferred; see [compatibility, supported versions and upgrades](docs/compatibility.md).
 
 ## Install
 
 With Go 1.27.3:
 
 ```sh
-go install github.com/heynemann/go-plg-s3-registry/cmd/plg-registry@v0.1.0
+go install github.com/heynemann/go-plg-s3-registry/cmd/plg-registry@v0.1.1
 plg-registry --help
 ```
 
-Run the installed binary from `GOBIN`, or from `$(go env GOPATH)/bin` if `GOBIN` is unset. Add the directory to `PATH` for the second command. In a Go host project, use `go get github.com/heynemann/go-plg-s3-registry/dataplane@v0.1.0` and confirm your host uses the [tested go-plg revision](docs/compatibility.md).
+Run the installed binary from `GOBIN`, or from `$(go env GOPATH)/bin` if `GOBIN` is unset. Add the directory to `PATH` for the second command. In a Go host project, use `go get github.com/heynemann/go-plg-s3-registry/dataplane@v0.1.1` and confirm your host uses the [tested go-plg revision](docs/compatibility.md).
 
 ## Quickstart: local rewards rollout
 
 Check out the same tag to run the example. It needs Git, Bash, Docker, curl 7.75.0+, jq, and OpenSSL in addition to Go:
 
 ```sh
-git clone --branch v0.1.0 https://github.com/heynemann/go-plg-s3-registry.git
+git clone --branch v0.1.1 https://github.com/heynemann/go-plg-s3-registry.git
 cd go-plg-s3-registry
 ./examples/rewards/run-demo.sh
 ```
