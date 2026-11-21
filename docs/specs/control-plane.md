@@ -10,7 +10,7 @@ If an adopter later needs a shared HTTP management endpoint, specify it separate
 
 ## Command contract
 
-Names below are the command groups; exact flag spelling can change before release. `--output json` provides a versioned result on stdout; diagnostics go to stderr and never contain credentials, secrets or raw targeting inputs. Local validation and preview do not require a write role. Mutations report `submitted` until the workflow has an applied or terminal result; discovery of an applied record is not evidence that hosts adopted it.
+`--output json` provides a versioned result on stdout; diagnostics go to stderr and never contain credentials, secrets or raw targeting inputs. Local preview does not require a write role. A workflow dispatch is only a submission; the executed CLI reports the committed result or an error. A committed decision is not evidence that hosts adopted it. See the [compatibility policy](../compatibility.md) for preview guarantees.
 
 | Operation | Caller and request | Result / invariant |
 | --- | --- | --- |
@@ -21,7 +21,7 @@ Names below are the command groups; exact flag spelling can change before releas
 | `rollout activate`, `rollout advance`, `rollout resume`, `rollout finish`, `rollout set-default` | Authorized operator submits command ID, expected revision, approval, reason and evidence references to the protected executor | Applies one allowed transition or returns a conflict/rejection. `finish` never widens targeting. `set-default` is a distinct authorized decision. |
 | `rollout pause`, `rollout rollback`, `release quarantine` | Authorized on-call; expected revision, reason and incident reference | Narrow-only actions. Pause stops advancement. Rollback changes new assignments, not pins. Quarantine denies one plugin/digest throughout the environment, including pinned calls. |
 | `release restore`, `publisher rotate`, `publisher suspend` | Fresh independent approval to clear quarantine; separate trust administrator for publisher changes | Clearing a deny entry does not activate or ramp the digest. Routine rotation preserves verifiably admitted artifacts; suspension blocks new publishes and lists affected digests for review. |
-| `status`, `history` | Authorized reader, scoped to plugin/environment | Desired revision and applied history, plus observed host readiness, freshness and traffic when available. Missing telemetry is **unknown**, not zero or ready. |
+| `status`, `history` | Authorized reader, scoped to plugin/environment | `status` shows committed desired state and proof freshness; `history` follows the applied decision chain. Host adoption and actual traffic come from the host telemetry, not these commands. An unknown observation is not zero or ready. |
 | `freshness renew`, `recovery reconcile` | Separate automated renewal authority; separately authorized recovery operator | Renew only current committed state. Recover by reconciling history and denies and fencing the old authority before issuing fresh proofs; no automatic failover. |
 
 ### Changes, approvals and retries

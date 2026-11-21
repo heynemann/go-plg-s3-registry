@@ -1,0 +1,38 @@
+name: Verify registry release tag
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release-smoke:
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Install the tagged CLI and exercise it against Floci
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]
+          module=github.com/heynemann/go-plg-s3-registry
+          export GOBIN="$RUNNER_TEMP/registry-bin"
+          export PLG_REGISTRY_BIN="$GOBIN/plg-registry"
+          # Install independently of the checkout; ensure it did not use a local build.
+          (cd "$RUNNER_TEMP"; go install "$module/cmd/plg-registry@$VERSION")
+          go version -m "$PLG_REGISTRY_BIN" | awk -v module="$module" -v version="$VERSION" '
+            $1 == "mod" && $2 == module && $3 == version { found = 1 }
+            END { exit !found }
+          '
+          ./examples/rewards/run-demo.sh

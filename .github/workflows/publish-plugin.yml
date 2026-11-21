@@ -1,0 +1,127 @@
+name: Build and publish a plugin release
+
+on:
+  workflow_call:
+    inputs:
+      plugin:
+        description: Registry plugin ID
+        type: string
+        required: true
+      version:
+        description: Author-chosen immutable release version
+        type: string
+        required: true
+      directory:
+        description: Plugin directory relative to the author repository
+        type: string
+        required: true
+      registry:
+        description: Registry ID
+        type: string
+        required: true
+      bucket:
+        description: Publication bucket (not the production activation bucket)
+        type: string
+        required: true
+      account:
+        description: Expected bucket and publisher role account ID
+        type: string
+        required: true
+      region:
+        description: Bucket and signer region
+        type: string
+        required: true
+      role:
+        description: Plugin-scoped AWS publisher role ARN
+        type: string
+        required: true
+      key:
+        description: Registered plugin-specific KMS signing key ARN
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  pack:
+    if: github.ref_protected && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: author
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version: '1.27.3'
+          cache: false
+      - name: Pack the clean author checkout and run its tests
+        env:
+          PLUGIN_DIR: ${{ inputs.directory }}
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP" go install github.com/heynemann/go-plg/cmd/plg@v0.0.0-20261110221856-eed62cdec1bc
+          cd "$GITHUB_WORKSPACE/author"
+          plugin_dir=$(realpath -- "$PLUGIN_DIR")
+          case "$plugin_dir" in "$PWD"|"$PWD/"*) ;; *) echo 'Plugin directory must be inside the author checkout' >&2; exit 1;; esac
+          mkdir -p "$RUNNER_TEMP/packed"
+          "$RUNNER_TEMP/plg" pack -color never -o "$RUNNER_TEMP/packed" "$plugin_dir"
+          shopt -s nullglob
+          archives=("$RUNNER_TEMP/packed/"*.plg)
+          if (( ${#archives[@]} != 1 )); then
+            echo 'Select a directory that packs exactly one plugin' >&2
+            exit 1
+          fi
+          mv -- "${archives[0]}" "$RUNNER_TEMP/release.plg"
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: plugin-release
+          path: ${{ runner.temp }}/release.plg
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: pack
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: plugin-release
+          path: ${{ runner.temp }}/packed
+      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ inputs.role }}
+          allowed-account-ids: ${{ inputs.account }}
+          aws-region: ${{ inputs.region }}
+          role-duration-seconds: 900
+      - name: Sign and publish the packed artifact
+        env:
+          PLUGIN_ID: ${{ inputs.plugin }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          REGISTRY_ID: ${{ inputs.registry }}
+          RELEASE_BUCKET: ${{ inputs.bucket }}
+          BUCKET_OWNER: ${{ inputs.account }}
+          AWS_REGION: ${{ inputs.region }}
+          SIGNING_KEY: ${{ inputs.key }}
+        run: |
+          set -euo pipefail
+          go run ./cmd/plg-registry --registry "$REGISTRY_ID" --bucket "$RELEASE_BUCKET" \
+            --bucket-owner "$BUCKET_OWNER" --region "$AWS_REGION" --output json release publish \
+            --plugin "$PLUGIN_ID" --version "$RELEASE_VERSION" --source-commit "$GITHUB_SHA" \
+            --artifact "$RUNNER_TEMP/packed/release.plg" --key-id "$SIGNING_KEY"

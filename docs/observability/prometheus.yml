@@ -1,0 +1,78 @@
+groups:
+  - name: plugin-registry
+    rules:
+      - record: registry:observed_generation:max
+        expr: max by (registry, environment, plugin) (registry_host_revision{stage="observed"})
+      - record: registry:effective_generation:min
+        expr: min by (registry, environment, plugin) (registry_host_revision{stage="effective"})
+      - record: registry:initial_invocations:rate5m
+        expr: sum by (registry, environment, plugin, lane) (rate(registry_host_operations_total{operation="invoke",outcome="admitted"}[5m]))
+      - record: registry:initial_invocations_total:rate5m
+        expr: sum without (lane) (registry:initial_invocations:rate5m)
+      - record: registry:reporter_coverage_complete
+        expr: |
+          (count by (registry, environment, plugin) (registry_host_state{state="fresh"})
+            or on (registry, environment, plugin) (0 * registry_expected_hosts))
+          == bool on (registry, environment, plugin) registry_expected_hosts
+      - record: registry:initial_candidate_share:ratio5m
+        expr: |
+          ((sum without (lane) (registry:initial_invocations:rate5m{lane="candidate"})
+            or on (registry, environment, plugin) (0 * registry:initial_invocations_total:rate5m))
+          / (registry:initial_invocations_total:rate5m > 0))
+          and on (registry, environment, plugin) (registry:reporter_coverage_complete == 1)
+          and on (registry, environment, plugin) (min_over_time(registry:reporter_coverage_complete[5m]) == 1)
+      - alert: RegistryPluginHostLag
+        expr: registry:observed_generation:max > registry:effective_generation:min
+        for: 2m
+        labels:
+          severity: warning
+          route: registry
+        annotations:
+          summary: At least one reporting host has not applied verified rollout authority
+          action: Pause progression and inspect the desired head, local readiness and warm failure traces.
+      - alert: RegistryPluginStaleAuthority
+        expr: min by (registry, environment, plugin) (registry_host_state{state="fresh"}) == 0
+        for: 1m
+        labels:
+          severity: critical
+          route: registry
+        annotations:
+          summary: At least one reporting host lacks fresh registry authority
+          action: Check issuer, exact committed head, S3 access and host clocks; never renew from backup.
+      - alert: RegistryPluginWarmFailure
+        expr: |
+          sum by (registry, environment, plugin) (increase(registry_host_operations_total{operation=~"load|warm",outcome!="ok"}[5m])) > 0
+        labels:
+          severity: warning
+          route: host
+        annotations:
+          summary: Registry plugin artifact or runtime admission failed
+          action: Check exact-digest load traces for policy, verification, materialization or capacity failures before advancing.
+      - alert: RegistryPluginPoolWait
+        expr: max by (registry, environment, plugin) (registry_host_pressure{kind=~"waiting|cold_waiting"}) > 0
+        for: 2m
+        labels:
+          severity: warning
+          route: host
+        annotations:
+          summary: Plugin calls or cold admissions are persistently queued
+          action: Check budget, queue pressure and invocation timeouts before advancing.
+      - alert: RegistryPluginIncorrectOutcome
+        expr: |
+          sum by (registry, environment, plugin, lane) (increase(registry_host_operations_total{operation="correctness",outcome="incorrect"}[5m])) > 0
+        labels:
+          severity: critical
+          route: host
+        annotations:
+          summary: Host reported an incorrect plugin outcome
+          action: Pause progression, triage at the host, and escalate a corroborated plugin regression using verified ownership on invocation traces.
+      - alert: RegistryPluginInvocationTimeout
+        expr: |
+          sum by (registry, environment, plugin, lane) (increase(registry_host_operations_total{operation=~"invoke|invoke_retry",outcome="timeout"}[5m])) > 0
+        for: 2m
+        labels:
+          severity: warning
+          route: host
+        annotations:
+          summary: Plugin invocation deadlines are expiring
+          action: Separate first invocations from pinned retries and check the affected host and digest in traces.
