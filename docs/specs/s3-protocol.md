@@ -18,6 +18,12 @@ Use a versioned namespace and stable, validated IDs as key segments. Use exact-k
 
 Use a type-separated signed envelope (DSSE format) for attestations, decisions and proofs. Sign the exact stored payload bytes; the signature must bind the payload type. Hash the exact stored plan bytes and bind that digest to approval; parsing and reserializing a document does not recreate its identity. Use UTC timestamps; reject duplicate fields and invalid scope/type bindings. Pin supported algorithms and verification keys by purpose in trust configuration, not from envelope-supplied key material. Signing-provider integration and machine-readable schemas are implementation deliverables before declaring wire compatibility. S3 encryption and ETags do not replace signature or digest verification.
 
+### Publication format
+
+The publication namespace is `v1/<registry>`. A plugin's administrator-owned binding is `plugins/<plugin>/registration.json`; release versions are `plugins/<plugin>/releases/<version>.json`; exact archive bytes are `artifacts/<sha256:digest>.plg`. The binding and signed release payload each declare a schema version and their registry and plugin scope. The release includes the registration digest, exact archive digest and length, author and workflow attribution, contract, manifest capability declarations, and the digest and passed-case count of the embedded validation report.
+
+Release envelopes use DSSE payload type `application/vnd.go-plg-s3-registry.release.v1+json` and one ASN.1 ECDSA P-256 signature over the SHA-256 of the DSSE pre-authentication encoding. The key ID selects the registered exact KMS key ARN (or a loopback-only fixture key); verifiers use the public key in the trusted registration. The v1 producer emits a single JSON encoding for these records. Verify the stored payload bytes and key, not a normalized representation or the human version. Trust rotation and production activation are separate lifecycle operations; publishing never writes a head.
+
 ## Conditional publication and audit
 
 1. Upload artifacts, release bindings, plan/approval records and signed decisions with `If-None-Match: *`. On an already-present result, return idempotent success only after verifying the existing binding is identical. Reject conflicting contents. Disable ordinary removal of protected keys: a delete marker can make a previously used key look absent to a conditional create.
