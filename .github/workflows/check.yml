@@ -20,7 +20,11 @@ jobs:
           go-version-file: go.mod
       - name: Check formatting and dependencies
         run: |
-          test -z "$(gofmt -l cmd dataplane internal)"
+          unformatted=$(gofmt -l cmd dataplane internal)
+          if [[ -n "$unformatted" ]]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted" >&2
+            exit 1
+          fi
           go mod tidy -diff
       - name: Run tests with Floci
         run: go test -race -tags integration ./...

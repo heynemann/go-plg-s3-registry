@@ -125,7 +125,7 @@ func TestPublishRelease(t *testing.T) {
 	artifactKey := "v1/demo/artifacts/" + release.Digest + ".plg"
 	var index struct {
 		Registration string `json:"registration_digest"`
-		Releases map[string]struct {
+		Releases     map[string]struct {
 			Envelope string `json:"envelope_digest"`
 		} `json:"releases"`
 	}
@@ -133,7 +133,7 @@ func TestPublishRelease(t *testing.T) {
 	indexKey := prefix + "index.json"
 	require.NoError(t, sonic.ConfigStd.Unmarshal(objectBytes(t, s3client, indexKey), &index))
 	releaseKey := prefix + "releases/" + index.Releases["v1.0.0"].Envelope + ".json"
-	require.ElementsMatch(t, []string{artifactKey, releaseKey, indexKey, prefix+"registrations/"+index.Registration+".json"}, keys,
+	require.ElementsMatch(t, []string{artifactKey, releaseKey, indexKey, prefix + "registrations/" + index.Registration + ".json"}, keys,
 		"publication must not create an active plan or mutate the registration")
 	require.Equal(t, content, objectBytes(t, s3client, artifactKey))
 	// Preserve well-formed DSSE but alter the signed payload; inspect must refuse it.
