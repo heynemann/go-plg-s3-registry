@@ -1,0 +1,123 @@
+name: Apply an approved registry request
+run-name: ${{ inputs.operation }} · ${{ inputs.deployment }} · ${{ inputs.request }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation on the protected request
+        type: choice
+        required: true
+        options:
+          - propose
+          - approve
+          - approve-restore
+          - activate
+          - advance
+          - resume
+          - finish
+          - set-default
+          - pause
+          - rollback
+          - quarantine
+          - restore
+          - renew
+          - rotate
+          - suspend
+          - reconcile
+      deployment:
+        description: Slug naming a reviewed control/deployments JSON file
+        type: string
+        required: true
+      request:
+        description: Slug naming a reviewed request for this deployment and operation
+        type: string
+        required: true
+
+permissions: {}
+
+# Provision each listed environment with required, independent reviewers,
+# prevent self-review, and restrict deployments to the protected default branch.
+# Each environment configures PLG_CONTROL_ROLE, PLG_CONTROL_ACCOUNT and
+# PLG_CONTROL_REGION. Its AWS trust policy must match the audience and exact
+# customized OIDC subject for this repository, environment, ref and workflow_ref.
+# Pin those IAM role ARNs and immutable role IDs in the deployment trust file.
+# A signed actor is that verified role, not github.actor or a request field.
+jobs:
+  apply:
+    if: github.event_name == 'workflow_dispatch' && github.ref_protected && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: >-
+        ${{ format('control-{0}',
+        inputs.operation == 'propose' && 'proposer' ||
+        contains(fromJSON('["approve","approve-restore"]'), inputs.operation) && 'approver' ||
+        contains(fromJSON('["activate","advance","resume","finish","set-default","restore"]'), inputs.operation) && 'decider' ||
+        contains(fromJSON('["pause","rollback","quarantine"]'), inputs.operation) && 'responder' ||
+        inputs.operation == 'renew' && 'renewer' ||
+        contains(fromJSON('["rotate","suspend"]'), inputs.operation) && 'publisher-admin' ||
+        inputs.operation == 'reconcile' && 'recoverer' || 'invalid') }}
+    permissions:
+      contents: read
+      actions: read
+      deployments: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Select reviewed inputs and build the trusted executor
+        env:
+          OPERATION: ${{ inputs.operation }}
+          DEPLOYMENT: ${{ inputs.deployment }}
+          REQUEST: ${{ inputs.request }}
+        run: |
+          set -euo pipefail
+          slug='^[a-z0-9][a-z0-9-]{0,62}$'
+          [[ "$DEPLOYMENT" =~ $slug && "$REQUEST" =~ $slug ]]
+          case "$OPERATION" in
+            propose|approve|approve-restore|activate|advance|resume|finish|set-default|pause|rollback|quarantine|restore|renew|rotate|suspend|reconcile) ;;
+            *) exit 1 ;;
+          esac
+          config="$GITHUB_WORKSPACE/control/deployments/$DEPLOYMENT.json"
+          request="$GITHUB_WORKSPACE/control/requests/$DEPLOYMENT/$OPERATION/$REQUEST.json"
+          for input in "$config" "$request"; do
+            [[ -f "$input" && "$(realpath -e -- "$input")" == "$input" ]] || {
+              echo 'Control inputs must be regular files in the trusted checkout' >&2
+              exit 1
+            }
+          done
+          printf 'PLG_CONTROL_CONFIG=%s\nPLG_CONTROL_REQUEST=%s\n' "$config" "$request" >> "$GITHUB_ENV"
+          go build -mod=readonly -trimpath -o "$RUNNER_TEMP/plg-registry" ./cmd/plg-registry
+      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708 # v5
+        with:
+          role-to-assume: ${{ vars.PLG_CONTROL_ROLE }}
+          allowed-account-ids: ${{ vars.PLG_CONTROL_ACCOUNT }}
+          aws-region: ${{ vars.PLG_CONTROL_REGION }}
+          role-duration-seconds: 900
+          role-session-name: plg-${{ github.run_id }}-${{ github.run_attempt }}
+          unset-current-credentials: true
+      - name: Execute and report the committed result
+        env:
+          OPERATION: ${{ inputs.operation }}
+          PLG_GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          case "$OPERATION" in
+            propose) args=(rollout propose --plan "$PLG_CONTROL_REQUEST") ;;
+            approve|approve-restore) args=(rollout "$OPERATION" --request "$PLG_CONTROL_REQUEST") ;;
+            activate|advance|resume|finish|set-default|pause|rollback) args=(rollout "$OPERATION" --command "$PLG_CONTROL_REQUEST") ;;
+            quarantine|restore) args=(release "$OPERATION" --command "$PLG_CONTROL_REQUEST") ;;
+            renew) args=(freshness renew --request "$PLG_CONTROL_REQUEST") ;;
+            rotate|suspend) args=(publisher "$OPERATION" --request "$PLG_CONTROL_REQUEST") ;;
+            reconcile) args=(recovery reconcile --request "$PLG_CONTROL_REQUEST") ;;
+            *) exit 1 ;;
+          esac
+          exec "$RUNNER_TEMP/plg-registry" --config "$PLG_CONTROL_CONFIG" --output json "${args[@]}"

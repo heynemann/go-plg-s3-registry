@@ -40,18 +40,11 @@ func (o *options) checkKeyMode(id string) error {
 
 func (o *options) signer(ctx context.Context, cfg aws.Config, keyID, privateFile string) (registry.Signer, error) {
 	if o.endpoint != "" {
-		der, err := keyPEM(privateFile, "PRIVATE KEY")
+		key, err := localSigningKey(privateFile)
 		if err != nil {
 			return nil, err
 		}
-		key, err := x509.ParsePKCS8PrivateKey(der)
-		signing, ok := key.(*ecdsa.PrivateKey)
-		if err != nil || !ok || signing.Curve != elliptic.P256() {
-			return nil, fmt.Errorf("%w: expected a PKCS#8 P-256 private key", registry.ErrInvalid)
-		}
-		return func(_ context.Context, digest [sha256.Size]byte) ([]byte, error) {
-			return ecdsa.SignASN1(rand.Reader, signing, digest[:])
-		}, nil
+		return signLocal(key), nil
 	}
 	if privateFile != "" {
 		return nil, fmt.Errorf("%w: --local-key is only usable with --endpoint", registry.ErrInvalid)
@@ -65,6 +58,29 @@ func (o *options) signer(ctx context.Context, cfg aws.Config, keyID, privateFile
 	if !identity.CanExpire && identity.SessionToken == "" {
 		return nil, fmt.Errorf("%w: publishing to AWS requires short-lived CI credentials", registry.ErrInvalid)
 	}
+	return kmsSigner(cfg, keyID), nil
+}
+
+func localSigningKey(path string) (*ecdsa.PrivateKey, error) {
+	der, err := keyPEM(path, "PRIVATE KEY")
+	if err != nil {
+		return nil, err
+	}
+	key, err := x509.ParsePKCS8PrivateKey(der)
+	signing, ok := key.(*ecdsa.PrivateKey)
+	if err != nil || !ok || signing.Curve != elliptic.P256() {
+		return nil, fmt.Errorf("%w: expected a PKCS#8 P-256 private key", registry.ErrInvalid)
+	}
+	return signing, nil
+}
+
+func signLocal(key *ecdsa.PrivateKey) registry.Signer {
+	return func(_ context.Context, digest [sha256.Size]byte) ([]byte, error) {
+		return ecdsa.SignASN1(rand.Reader, key, digest[:])
+	}
+}
+
+func kmsSigner(cfg aws.Config, keyID string) registry.Signer {
 	client := kms.NewFromConfig(cfg)
 	return func(ctx context.Context, digest [sha256.Size]byte) ([]byte, error) {
 		res, err := client.Sign(ctx, &kms.SignInput{
@@ -78,5 +94,5 @@ func (o *options) signer(ctx context.Context, cfg aws.Config, keyID, privateFile
 			return nil, registry.ErrDenied
 		}
 		return res.Signature, nil
-	}, nil
+	}
 }

@@ -20,7 +20,7 @@ jobs:
           go-version-file: go.mod
       - name: Check formatting and dependencies
         run: |
-          test -z "$(gofmt -l cmd internal)"
+          test -z "$(gofmt -l cmd dataplane internal)"
           go mod tidy -diff
       - name: Run tests with Floci
         run: go test -race -tags integration ./...

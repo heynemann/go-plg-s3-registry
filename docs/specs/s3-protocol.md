@@ -26,6 +26,10 @@ Release envelopes use DSSE payload type `application/vnd.go-plg-s3-registry.rele
 
 Publication and publisher administration share the per-plugin index CAS. A publication verified against a superseded binding cannot commit without re-reading and passing the current binding; historical admission still verifies against the immutable registration in its entry. A destination promoter copies the verified records and commits the exact version/digest without installing the source publisher as a writer. Authority and digest inspection never use prefix listing. For missing exact-key reads, grant the necessary bucket-level permission so AWS can return `NoSuchKey` rather than an indistinguishable `403`.
 
+### Environment format
+
+The destination includes the promoted publication objects plus `v1/<registry>/environments/<environment>/plugins/<plugin>/`. Within that prefix, `heads/<epoch>.json` binds the committed decision; `plans/<plan-digest>.json` holds the exact plan bytes and `proposals/<plan-digest>.json` its signed proposer endorsement. `approvals/<envelope-digest>.json` and `decisions/<envelope-digest>.json` are immutable. Only `freshness/<decision-digest>.json` is renewable, using CAS on that exact proof key. These paths allow least-privilege roles without authorizing list-based discovery. GitHub-backed proposal, approval, and decision payloads bind provider-supplied immutable run and human principal identifiers as well as the signing role.
+
 ## Conditional publication and audit
 
 1. Upload artifacts, release bindings, plan/approval records and signed decisions with `If-None-Match: *`. On an already-present result, return idempotent success only after verifying the existing binding is identical. Reject conflicting contents. Disable ordinary removal of protected keys: a delete marker can make a previously used key look absent to a conditional create.

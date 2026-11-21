@@ -1,6 +1,6 @@
 # go-plg-s3-registry
 
-An S3-backed release registry for [go-plg](https://github.com/heynemann/go-plg). The current slice reserves plugin identities, publishes signed releases, and verifies release metadata on inspection. Publishing never creates serving state. See [the lifecycle plan](https://github.com/heynemann/go-plg-s3-registry/issues/1) and [technical contracts](docs/specs/control-plane.md).
+An S3-backed release and rollout registry for [go-plg](https://github.com/heynemann/go-plg). The control plane is the `plg-registry` CLI and a protected execution workflow. The data plane is the `dataplane` Go SDK, which reads the host's environment bucket and invokes exact, verified plugin digests. There is no registry HTTP server, and go-plg does not import or configure the registry. See the [lifecycle spec](https://github.com/heynemann/go-plg-s3-registry/issues/1) and [operations guide](docs/operations.md).
 
 ## Build and test
 
@@ -11,7 +11,7 @@ go build ./cmd/plg-registry
 go test -race -tags integration ./...
 ```
 
-The integration test starts a digest-pinned Floci container, builds both CLIs, scaffolds and packs a real Lua plugin, publishes it, and inspects its signed release. It uses local keys and no AWS credentials. Live AWS conformance is intentionally not run at this stage.
+The integration suite starts isolated, digest-pinned Floci containers, packs real Lua plugins and exercises two independently configured go-plg hosts. It checks signed publication, approval and promotion, warming at 0%, targeted rollout, persisted retries, containment, expiry and recovered authority. It uses local keys and no AWS credentials. [Live AWS conformance](https://github.com/heynemann/go-plg-s3-registry/issues/15) is separate and deferred.
 
 ## Author a plugin
 
@@ -45,3 +45,17 @@ Example read-only inspection (uses AWS's normal credential discovery):
 Use `--digest sha256:<64 lowercase hex digits>` instead of `--version` to find all published versions for an exact archive. Inspection verifies signed metadata against the administrator's binding; it does not download or load the artifacts. AWS `--bucket-owner` is mandatory. For local development only, use `--endpoint http://127.0.0.1:<port>` instead of `--bucket-owner`, `--key-id local:<name>`, and a P-256 PKCS#8 PEM `--local-key` on publish. That mode uses dummy loopback credentials and an administrator-supplied PKIX PEM public key. See the integration test for a complete local example.
 
 `--output json` emits versioned records on stdout; failures go to stderr. Exit codes distinguish invalid input (2), unauthorized publisher (3), immutable conflict (4), missing record (5), and invalid evidence in storage (6). Other failures exit 1. A successful publication is not an activation or evidence of host readiness.
+
+## Control rollouts
+
+Use `rollout preview` on synthetic inputs without a bucket or cloud credentials. Propose a plan for an exact digest and approve it separately. The [protected workflow](.github/workflows/control-apply.yml) applies reviewed requests against the exact expected revision. `status` reports committed state and freshness; `history` reports the applied chain, not orphaned proposals or losing writes. See [bootstrap, rollout, and recovery instructions](docs/operations.md).
+
+Publishing does not serve a plugin. First activation serves only after local verification, a live freshness proof, and a warmed runtime. Upgrades begin at 0%; `finish` retains the approved audience. A global default change needs explicit authorization. Rollback preserves receipts; quarantine blocks new calls even for existing pins on hosts that have seen it.
+
+## Integrate a host
+
+For Lua plugins, link `_ "github.com/heynemann/go-plg/guest/lua"` and use `dataplane.Attach[YourContract](ctx, nil, config, plg.WithLuaPlugins())` to register an SDK-owned go-plg container. Configure a read-only S3 client, scope and bucket owner, deployment-pinned verification keys, explicit unavailable behavior, capability ceilings, and the retry horizon. `Sync` bootstraps one revision; `Run` polls until canceled. Check `Status` for readiness and close the host on shutdown.
+
+Call `Select` with an opaque stable application key and allowlisted attributes. Persist the returned receipt in your operation store **before** side effects. Call `Invoke` with it and a bounded context; on retry, read the same receipt and call `InvokeRetry`. Never reselect to rescue a blocked pin. The registry does not store business operations, deliveries or idempotency keys. This pattern is exercised in the integration test across independent hosts.
+
+Use [the telemetry contract and dashboard queries](docs/observability/dashboard.md) with your existing OpenTelemetry exporters. Committed intent, effective host state, first invocations, and pinned retries are different signals.

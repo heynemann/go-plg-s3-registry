@@ -38,13 +38,13 @@ func main() {
 }
 
 type options struct {
-	registry, bucket, region, account, endpoint, output string
+	registry, bucket, region, account, endpoint, output, localKey string
 }
 
 func newRoot() *cobra.Command {
 	var opts options
 	root := &cobra.Command{
-		Use: "plg-registry", Short: "Publish and inspect signed go-plg releases",
+		Use: "plg-registry", Short: "Publish signed go-plg releases and manage rollout authority",
 		SilenceUsage: true, SilenceErrors: true,
 	}
 	flags := root.PersistentFlags()
@@ -54,11 +54,14 @@ func newRoot() *cobra.Command {
 	flags.StringVar(&opts.account, "bucket-owner", "", "expected AWS account owning the bucket (required without --endpoint)")
 	flags.StringVar(&opts.endpoint, "endpoint", "", "loopback HTTP endpoint for local S3 tests only")
 	flags.StringVar(&opts.output, "output", "text", "output format: text or json")
+	flags.StringVar(&opts.localKey, "local-key", "", "PEM PKCS#8 P-256 signing key (only with --endpoint)")
 	plugin := &cobra.Command{Use: "plugin", Short: "Manage registered plugin identities"}
 	plugin.AddCommand(opts.onboard())
 	release := &cobra.Command{Use: "release", Short: "Manage immutable plugin releases"}
 	release.AddCommand(opts.publish(), opts.inspect())
 	root.AddCommand(plugin, release)
+	o := controlOptions{global: &opts}
+	o.addCommands(root, release)
 	return root
 }
 
@@ -66,34 +69,45 @@ func (o *options) connect(ctx context.Context) (registry.Registry, aws.Config, e
 	if o.registry == "" || o.bucket == "" || (o.output != "text" && o.output != "json") {
 		return registry.Registry{}, aws.Config{}, fmt.Errorf("%w: --registry, --bucket and a text or json output format are required", registry.ErrInvalid)
 	}
-	var cfg aws.Config
-	var err error
+	cfg, err := o.awsConfig(ctx)
+	if err != nil {
+		return registry.Registry{}, aws.Config{}, err
+	}
+	bucket := bucketLocation{Bucket: o.bucket, Owner: o.account, Region: o.region}
+	r, err := registry.New(bucket.store(cfg, o.endpoint), o.registry)
+	return r, cfg, err
+}
+
+func (o *options) awsConfig(ctx context.Context) (aws.Config, error) {
 	if o.endpoint != "" {
 		if !loopbackEndpoint(o.endpoint) || o.account != "" {
-			return registry.Registry{}, aws.Config{}, fmt.Errorf("%w: --endpoint is a loopback HTTP origin for testing and cannot be combined with --bucket-owner", registry.ErrInvalid)
+			return aws.Config{}, fmt.Errorf("%w: --endpoint is a loopback HTTP origin for testing and cannot be combined with --bucket-owner", registry.ErrInvalid)
 		}
-		cfg = aws.Config{Region: o.region, Credentials: credentials.NewStaticCredentialsProvider("test", "test", "")}
-	} else {
-		if !accountID.MatchString(o.account) {
-			return registry.Registry{}, aws.Config{}, fmt.Errorf("%w: --bucket-owner must be a 12-digit AWS account", registry.ErrInvalid)
-		}
-		cfg, err = config.LoadDefaultConfig(ctx, config.WithRegion(o.region))
-		if err != nil {
-			return registry.Registry{}, aws.Config{}, err
-		}
-		// Application endpoints cannot be redirected through AWS_ENDPOINT_URL
-		// or a shared service-endpoint profile.
-		cfg.BaseEndpoint = nil
-		cfg.ConfigSources = nil
+		return aws.Config{Region: o.region, Credentials: credentials.NewStaticCredentialsProvider("test", "test", "")}, nil
 	}
+	if !accountID.MatchString(o.account) {
+		return aws.Config{}, fmt.Errorf("%w: --bucket-owner must be a 12-digit AWS account", registry.ErrInvalid)
+	}
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(o.region))
+	if err != nil {
+		return aws.Config{}, err
+	}
+	// Application endpoints cannot be redirected through AWS_ENDPOINT_URL
+	// or a shared service-endpoint profile.
+	cfg.BaseEndpoint = nil
+	cfg.ConfigSources = nil
+	return cfg, nil
+}
+
+func (b bucketLocation) store(cfg aws.Config, endpoint string) s3store.Store {
+	cfg.Region = b.Region
 	client := s3.NewFromConfig(cfg, func(opt *s3.Options) {
-		if o.endpoint != "" {
-			opt.BaseEndpoint = &o.endpoint
+		if endpoint != "" {
+			opt.BaseEndpoint = &endpoint
 			opt.UsePathStyle = true
 		}
 	})
-	r, err := registry.New(s3store.New(client, o.bucket, o.account), o.registry)
-	return r, cfg, err
+	return s3store.New(client, b.Bucket, b.Owner)
 }
 
 func loopbackEndpoint(endpoint string) bool {
@@ -151,7 +165,7 @@ func (o *options) onboard() *cobra.Command {
 }
 
 func (o *options) publish() *cobra.Command {
-	var plugin, version, source, artifact, keyID, privateFile string
+	var plugin, version, source, artifact, keyID string
 	cmd := &cobra.Command{
 		Use: "publish", Short: "Publish an exact packed artifact without activating it", Args: noArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -168,7 +182,7 @@ func (o *options) publish() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			sign, err := o.signer(ctx, cfg, keyID, privateFile)
+			sign, err := o.signer(ctx, cfg, keyID, o.localKey)
 			if err != nil {
 				return err
 			}
@@ -188,7 +202,6 @@ func (o *options) publish() *cobra.Command {
 	flags.StringVar(&source, "source-commit", "", "full commit that produced the artifact")
 	flags.StringVar(&artifact, "artifact", "", "packed .plg archive")
 	flags.StringVar(&keyID, "key-id", "", "exact registered signing key ID")
-	flags.StringVar(&privateFile, "local-key", "", "PEM PKCS#8 P-256 private key (only with --endpoint)")
 	return cmd
 }
 
@@ -270,6 +283,10 @@ func noArgs(_ *cobra.Command, args []string) error {
 }
 
 func failure(err error) (string, int) {
+	var control *controlError
+	if errors.As(err, &control) {
+		return control.failure()
+	}
 	switch {
 	case errors.Is(err, registry.ErrInvalid):
 		return err.Error(), 2
