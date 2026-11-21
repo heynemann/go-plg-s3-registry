@@ -1,0 +1,10 @@
+implements: github.com/heynemann/go-plg-s3-registry/examples/rewards/contract.Rule@v1.0.0
+language: lua
+entrypoint: plugin.lua
+owner:
+  team:
+    name: self-declared
+  contact:
+    oncall: unverified
+  links:
+    runbook: https://example.com/unverified

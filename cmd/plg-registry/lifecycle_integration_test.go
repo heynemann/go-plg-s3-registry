@@ -23,13 +23,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/bytedance/sonic"
 	"github.com/heynemann/go-plg"
-	_ "github.com/heynemann/go-plg/guest/lua"
 	"github.com/stretchr/testify/require"
 
 	"github.com/heynemann/go-plg-s3-registry/dataplane"
+	"github.com/heynemann/go-plg-s3-registry/examples/rewards/contract"
 	"github.com/heynemann/go-plg-s3-registry/internal/registry"
 	"github.com/heynemann/go-plg-s3-registry/internal/rollout"
-	"github.com/heynemann/go-plg-s3-registry/internal/testcontract"
 )
 
 const environmentBucket = "registry-environment"
@@ -231,14 +230,14 @@ func (f *lifecycle) renew() time.Time {
 		f.control("renewer", 0, "freshness", "renew", "--duration", "10m")).Expiry
 }
 
-func (f *lifecycle) host(memory uint64, offset *atomic.Int64, telemetry dataplane.Telemetry) *dataplane.Host[testcontract.Rule] {
+func (f *lifecycle) host(memory uint64, offset *atomic.Int64, telemetry dataplane.Telemetry) *dataplane.Host[contract.Rule] {
 	f.t.Helper()
 	scope := f.deployment.Scope
-	h, err := dataplane.Attach[testcontract.Rule](f.t.Context(), nil, dataplane.Config{
+	h, err := dataplane.Attach[contract.Rule](f.t.Context(), nil, dataplane.Config{
 		Client: f.client, Bucket: f.deployment.Destination.Bucket, Registry: scope.Registry, Environment: scope.Environment,
 		Plugin: scope.Plugin, Epoch: scope.Epoch, Trust: f.trust, Unavailable: dataplane.Hold, RetryHorizon: time.Hour,
-		RetentionMargin: time.Minute, MemoryLimit: 64 << 20, MemoryBudget: memory, ContractModule: contractPath,
-		ContractVersion: "v1.0.0", Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }, Telemetry: telemetry,
+		RetentionMargin: time.Minute, MemoryLimit: 64 << 20, MemoryBudget: memory, ContractModule: contract.Module,
+		ContractVersion: contract.Version, Now: func() time.Time { return time.Now().Add(time.Duration(offset.Load())) }, Telemetry: telemetry,
 	}, plg.WithLuaPlugins())
 	require.NoError(f.t, err)
 	f.t.Cleanup(func() {
@@ -249,7 +248,7 @@ func (f *lifecycle) host(memory uint64, offset *atomic.Int64, telemetry dataplan
 	return h
 }
 
-func selectReceipt(t *testing.T, h *dataplane.Host[testcontract.Rule], region, digest string) dataplane.Receipt {
+func selectReceipt(t *testing.T, h *dataplane.Host[contract.Rule], region, digest string) dataplane.Receipt {
 	t.Helper()
 	receipt, err := h.Select([]byte("user-2"), map[string]any{"region": region})
 	require.NoError(t, err)
@@ -257,9 +256,9 @@ func selectReceipt(t *testing.T, h *dataplane.Host[testcontract.Rule], region, d
 	return receipt
 }
 
-func invokeRule(t *testing.T, h *dataplane.Host[testcontract.Rule], receipt dataplane.Receipt, retry, want bool) {
+func invokeRule(t *testing.T, h *dataplane.Host[contract.Rule], receipt dataplane.Receipt, retry, want bool) {
 	t.Helper()
-	call := func(plugin testcontract.Rule) error {
+	call := func(plugin contract.Rule) error {
 		got, err := plugin.Accept(t.Context(), "silver")
 		if err == nil && got != want {
 			return errors.New("the wrong plugin digest answered the call")

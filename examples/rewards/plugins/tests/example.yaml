@@ -1,0 +1,7 @@
+cases:
+  - name: accepts gold
+    call: Accept
+    input:
+      value: gold
+    expect:
+      result: true

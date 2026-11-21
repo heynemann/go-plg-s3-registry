@@ -18,10 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/heynemann/go-plg-s3-registry/dataplane"
+	"github.com/heynemann/go-plg-s3-registry/examples/rewards/contract"
 	"github.com/heynemann/go-plg-s3-registry/internal/registry"
 	"github.com/heynemann/go-plg-s3-registry/internal/rollout"
 	"github.com/heynemann/go-plg-s3-registry/internal/target"
-	"github.com/heynemann/go-plg-s3-registry/internal/testcontract"
 )
 
 func TestRegistryLifecycle(t *testing.T) {
@@ -186,7 +186,7 @@ func TestRegistryLifecycle(t *testing.T) {
 	o11y.verify(t)
 }
 
-func admitInFlight(t *testing.T, h *dataplane.Host[testcontract.Rule], pin dataplane.Receipt) (func(), <-chan error) {
+func admitInFlight(t *testing.T, h *dataplane.Host[contract.Rule], pin dataplane.Receipt) (func(), <-chan error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	t.Cleanup(cancel)
@@ -194,7 +194,7 @@ func admitInFlight(t *testing.T, h *dataplane.Host[testcontract.Rule], pin datap
 	entered := make(chan struct{})
 	result := make(chan error, 1)
 	go func() {
-		result <- h.InvokeRetry(ctx, pin, func(plugin testcontract.Rule) error {
+		result <- h.InvokeRetry(ctx, pin, func(plugin contract.Rule) error {
 			close(entered)
 			select {
 			case <-gate:
@@ -224,9 +224,9 @@ func admitInFlight(t *testing.T, h *dataplane.Host[testcontract.Rule], pin datap
 	}, result
 }
 
-func noCall(t *testing.T) func(testcontract.Rule) error {
+func noCall(t *testing.T) func(contract.Rule) error {
 	t.Helper()
-	return func(testcontract.Rule) error { t.Error("unauthorized guest call was admitted"); return nil }
+	return func(contract.Rule) error { t.Error("unauthorized guest call was admitted"); return nil }
 }
 
 func (f *lifecycle) raceRung(input rollout.Command) decisionJSON {

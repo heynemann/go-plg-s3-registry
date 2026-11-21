@@ -15,7 +15,6 @@ import (
 	"io"
 	"net"
 	"net/netip"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,15 +31,13 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"golang.org/x/mod/module"
-	"golang.org/x/mod/zip"
 
-	"github.com/heynemann/go-plg-s3-registry/internal/testcontract"
+	"github.com/heynemann/go-plg-s3-registry/examples/rewards/contract"
+	"github.com/heynemann/go-plg-s3-registry/examples/rewards/plugins"
 )
 
 const (
 	flociImage   = "floci/floci@sha256:a0fbf944d7f338cc0856f1ef83831ea749ff2be71956eb7a7fce08fc21458e19"
-	contractPath = "github.com/heynemann/go-plg-s3-registry/internal/testcontract"
 	bucket       = "registry-integration"
 )
 
@@ -109,7 +106,7 @@ func TestPublishRelease(t *testing.T) {
 	require.Equal(t, commit, release.Commit)
 	require.Equal(t, "rewards", release.Owner, "artifact owner is self-declared")
 	require.Contains(t, release.Workflow, "/.github/workflows/publish-plugin.yml@")
-	require.Equal(t, contractPath+".Rule@v1.0.0", release.Contract.Interface)
+	require.Equal(t, contract.Module+".Rule@"+contract.Version, release.Contract.Interface)
 	require.Equal(t, 1, release.Evidence.Tests)
 	want := fmt.Sprintf(`{"schema_version":1,"releases":[%s]}`, first)
 	inspect := []string{"release", "inspect", "--plugin", "eligibility"}
@@ -224,89 +221,7 @@ func run(t *testing.T, dir string, env []string, binary string, args ...string) 
 
 func authorWorkflow(t *testing.T, dir, plg string) (first, commit, second, newCommit string) {
 	t.Helper()
-	src, proxy, author := filepath.Join(dir, "contract"), filepath.Join(dir, "proxy"), filepath.Join(dir, "author")
-	versionDir := filepath.Join(proxy, contractPath, "@v")
-	for _, path := range []string{src, versionDir, author} {
-		require.NoError(t, os.MkdirAll(path, 0o700))
-	}
-	goMod := []byte("module " + contractPath + "\n\ngo 1.27\n")
-	require.NoError(t, os.WriteFile(filepath.Join(src, "go.mod"), goMod, 0o600))
-	code, err := testcontract.Source.ReadFile("contract.go")
+	commits, err := plugins.Pack(t.Context(), plg, dir)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(src, "contract.go"), code, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.mod"), goMod, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.info"), []byte(`{"Version":"v1.0.0","Time":"2020-01-01T00:00:00Z"}`), 0o600))
-	archive, err := os.Create(filepath.Join(versionDir, "v1.0.0.zip"))
-	require.NoError(t, err)
-	err = zip.CreateFromDir(archive, module.Version{Path: contractPath, Version: "v1.0.0"}, src)
-	require.NoError(t, archive.Close())
-	require.NoError(t, err)
-	proxyURL := (&url.URL{Scheme: "file", Path: proxy}).String()
-	env := []string{
-		"GOPROXY=" + proxyURL, "GOMODCACHE=" + filepath.Join(dir, "modcache"),
-		"GOFLAGS=-modcacherw", "GONOSUMDB=" + contractPath, "GOPRIVATE=", "GONOPROXY=none",
-		"GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=" + os.DevNull, "GIT_CONFIG_COUNT=0",
-	}
-	run(t, author, env, "git", "init", "-q")
-	run(t, author, env, plg, "init", "-lang", "lua", "-implements", contractPath+".Rule@v1.0.0", "eligibility")
-	plugin := filepath.Join(author, "eligibility")
-	sourceFile := filepath.Join(plugin, "plugin.lua")
-	writeSource := func(accept string) {
-		t.Helper()
-		code := `local Rule = {}
-function Rule:Accept(value)
-  return ` + accept + `
-end
-function Create()
-  return setmetatable({}, { __index = Rule })
-end
-`
-		require.NoError(t, os.WriteFile(sourceFile, []byte(code), 0o600))
-	}
-	writeSource(`value == "gold"`)
-	require.NoError(t, os.WriteFile(filepath.Join(plugin, "tests", "example.yaml"), []byte(`cases:
-  - name: accepts gold
-    call: Accept
-    input:
-      value: gold
-    expect:
-      result: true
-`), 0o600))
-	// This valid-looking ownership claim must not become registry authority.
-	require.NoError(t, os.WriteFile(filepath.Join(plugin, "plugin.yaml"), []byte(`implements: `+contractPath+`.Rule@v1.0.0
-language: lua
-entrypoint: plugin.lua
-owner:
-  maintainers:
-    - name: Example Author
-      email: author@example.com
-      handle: "@author"
-  team:
-    name: self-declared
-    department: authoring
-  org: example
-  company: example
-  contact:
-    oncall: unverified
-    channel: "#example"
-    email: author@example.com
-  links:
-    repository: https://example.com/rule
-    runbook: https://example.com/unverified
-`), 0o600))
-	pack := func(out string) (string, string) {
-		t.Helper()
-		run(t, author, env, "git", "add", "--all")
-		run(t, author, env, "git", "-c", "user.name=Author", "-c", "user.email=author@example.com",
-			"-c", "commit.gpgsign=false", "commit", "-qm", out)
-		commit := strings.TrimSpace(string(run(t, author, env, "git", "rev-parse", "HEAD")))
-		output := filepath.Join(dir, out)
-		run(t, author, env, plg, "pack", "-color", "never", "-o", output, "eligibility")
-		return filepath.Join(output, "eligibility.plg"), commit
-	}
-	run(t, author, env, plg, "validate", "-color", "never", "eligibility")
-	first, commit = pack("first")
-	writeSource(`value == "gold" or value == "silver"`)
-	second, newCommit = pack("second")
-	return first, commit, second, newCommit
+	return filepath.Join(dir, "first.plg"), commits.First, filepath.Join(dir, "second.plg"), commits.Second
 }
