@@ -10,6 +10,8 @@ You need Go 1.27.3, Git, Bash, a running local Docker Engine (or Docker Desktop)
 
 The script builds `plg-registry` and the rewards app, packs two real Lua archives, generates independent demo signing keys, and gives Floci and rewards separate loopback ports. The **rewards** HTTP API uses only local fixtures. The **registry** has no HTTP API: `plg-registry` writes to local Floci, and the Go SDK reads the environment bucket from inside rewards. The script uses dummy S3 credentials and never contacts live AWS.
 
+To use a CLI you installed from the matching release instead of building it from the checkout, run `PLG_REGISTRY_BIN=plg-registry ./examples/rewards/run-demo.sh` with the binary on `PATH`, or set `PLG_REGISTRY_BIN` to its executable path.
+
 ## What you'll see
 
 1. **Publish and activate v1.** Publishing to the publication bucket alone doesn't serve anything. After a proposal, independent approval, and activation, `/readyz` still returns `503` until the renewer issues a proof and the host warms v1. The short proof expires, `/readyz` returns `503` again, and renewing the same decision restores readiness.

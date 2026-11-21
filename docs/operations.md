@@ -2,6 +2,8 @@
 
 The registry has no management server. Run `plg-registry` locally for authoring, preview and inspection; run state-changing production commands in the protected control workflow. The host integrates the Go data plane and reads its own environment bucket with a read-only role. Neither publishing nor writing rollout records directly is an invocation API.
 
+For local evaluation, start with the [Floci rewards walkthrough](../examples/rewards/README.md). AWS instructions below describe deployment prerequisites, not a certified setup: the developer preview has not passed [production conformance](compatibility.md).
+
 ## Bootstrap trust
 
 Configure a publication bucket and a separate production AWS account, bucket, encryption key and role boundary. The deployment pins expected bucket owners and regional endpoints. Enable bucket versioning, encryption, access logging and retention compatible with the longest host retry horizon. Run reconciliation from the current primary, not a replica or a CDN. Give hosts read-only access to their environment, not to the publication source or to signing keys. Keep a copy of the authority epoch and verified applied checkpoint in independent deployment/audit storage.

@@ -8,6 +8,11 @@ die() { printf 'rewards demo: %s\n' "$*" >&2; exit 1; }
 for tool in go git docker curl jq openssl; do
   command -v "$tool" >/dev/null || die "missing dependency: $tool (see examples/rewards/README.md)"
 done
+registry_bin=''
+if [[ -n "${PLG_REGISTRY_BIN:-}" ]]; then
+  registry_bin=$(type -P -- "$PLG_REGISTRY_BIN") || die "not an executable: $PLG_REGISTRY_BIN"
+  case "$registry_bin" in /*) ;; *) registry_bin="$PWD/$registry_bin" ;; esac
+fi
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 work=$(mktemp -d "${TMPDIR:-/tmp}/registry-rewards.XXXXXXXX")
 work=$(cd -- "$work" && pwd -P)
@@ -49,8 +54,11 @@ export NO_PROXY="127.0.0.1${NO_PROXY:+,$NO_PROXY}"
 
 local_curl() { curl --disable --noproxy '*' --silent --show-error "$@"; }
 
-say 'Build the CLI and rewards HTTP app, and pack both Lua releases'
-go build -o "$work/plg-registry" ./cmd/plg-registry
+say 'Prepare the CLI and rewards HTTP app, and pack both Lua releases'
+if [[ -z "$registry_bin" ]]; then
+  registry_bin="$work/plg-registry"
+  go build -o "$registry_bin" ./cmd/plg-registry
+fi
 go build -o "$work/rewards" ./examples/rewards/cmd/rewards
 go run ./examples/rewards/cmd/pack --out "$work" >"$work/pack.json"
 
@@ -89,7 +97,7 @@ jq -n --arg epoch "$epoch" --arg region "$region" --arg dest "$destination" --ar
     max_lease:"10m", authorities:$authorities
   }' >"$config"
 
-registry() { "$work/plg-registry" --endpoint "$endpoint" --output json "$@"; }
+registry() { "$registry_bin" --endpoint "$endpoint" --output json "$@"; }
 publish_cli() { registry --registry demo --bucket "$publication" --region "$region" "$@"; }
 control() {
   local role=$1
@@ -250,7 +258,7 @@ attempt warm-eu ineligible 0 "$first"
 
 say 'Advance to 25% of matching EU subjects; US silver stays on v1'
 printf '%s\n' '{"region":"EU"}' >"$work/eu.json"
-"$work/plg-registry" --output json rollout preview --plan "$work/upgrade-plan.json" \
+"$registry_bin" --output json rollout preview --plan "$work/upgrade-plan.json" \
   --subject user-2 --attrs "$work/eu.json" --rung 2500 | jq -e 'select(.match == true and .bucket == 2006 and .candidate == true)'
 jq -n --arg expected "$decision" --arg approval "$approval_id" --arg evidence "$evidence" \
   '{id:"rung-25",expected:$expected,approval_id:$approval,reason:"observed warm host",rung:2500,evidence:[$evidence]}' >"$command_file"
