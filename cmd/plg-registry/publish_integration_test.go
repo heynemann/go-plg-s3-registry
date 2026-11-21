@@ -37,8 +37,8 @@ import (
 )
 
 const (
-	flociImage   = "floci/floci@sha256:a0fbf944d7f338cc0856f1ef83831ea749ff2be71956eb7a7fce08fc21458e19"
-	bucket       = "registry-integration"
+	flociImage = "floci/floci@sha256:a0fbf944d7f338cc0856f1ef83831ea749ff2be71956eb7a7fce08fc21458e19"
+	bucket     = "registry-integration"
 )
 
 func TestPublishRelease(t *testing.T) {
