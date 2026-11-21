@@ -2,6 +2,16 @@
 
 An S3-backed release and rollout registry for [go-plg](https://github.com/heynemann/go-plg). The control plane is the `plg-registry` CLI and a protected execution workflow. The data plane is the `dataplane` Go SDK, which reads the host's environment bucket and invokes exact, verified plugin digests. There is no registry HTTP server, and go-plg does not import or configure the registry. See the [lifecycle spec](https://github.com/heynemann/go-plg-s3-registry/issues/1) and [operations guide](docs/operations.md).
 
+## Quickstart: local rewards rollout
+
+From a fresh checkout, with Go 1.27.3, Git, Bash, Docker, curl 7.75.0+, jq, and OpenSSL:
+
+```sh
+./examples/rewards/run-demo.sh
+```
+
+The [rewards walkthrough](examples/rewards/README.md) publishes two Lua releases to local Floci, warms the upgrade at 0%, rolls it out to 25% of the EU audience, then shows how rollback and quarantine affect persisted retries. The HTTP API belongs to the example app, which uses only local fixtures and stores its ledger in SQLite. The registry exposes no HTTP API, and the demo never contacts live AWS.
+
 ## Build and test
 
 Requires Go 1.27.3, Git, and Docker for integration tests.

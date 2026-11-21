@@ -1,0 +1,122 @@
+openapi: 3.0.3
+info:
+  title: Local rewards example
+  version: 1.0.0
+paths:
+  /readyz:
+    get:
+      tags: [rewards]
+      operationId: Readiness
+      responses:
+        '200':
+          description: The effective rule is ready.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Readiness'}
+        '503':
+          description: The effective rule is not ready.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Readiness'}
+  /v1/deliveries/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryID'
+    put:
+      tags: [rewards]
+      operationId: ReserveDelivery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/Reservation'}
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '201':
+          description: Delivery reserved with a persisted rule selection.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Delivery'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '409': {$ref: '#/components/responses/Problem'}
+        '500': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+    get:
+      tags: [rewards]
+      operationId: GetDelivery
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '500': {$ref: '#/components/responses/Problem'}
+  /v1/deliveries/{id}/attempt:
+    parameters:
+      - $ref: '#/components/parameters/DeliveryID'
+    post:
+      tags: [rewards]
+      operationId: AttemptDelivery
+      responses:
+        '200': {$ref: '#/components/responses/Delivery'}
+        '400': {$ref: '#/components/responses/Problem'}
+        '404': {$ref: '#/components/responses/Problem'}
+        '500': {$ref: '#/components/responses/Problem'}
+        '503': {$ref: '#/components/responses/Problem'}
+components:
+  parameters:
+    DeliveryID:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+  responses:
+    Delivery:
+      description: Current durable delivery state.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Delivery'}
+    Problem:
+      description: The operation could not be completed.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/Problem'}
+  schemas:
+    Readiness:
+      type: object
+      required: [ready, effective]
+      properties:
+        ready: {type: boolean}
+        effective:
+          type: object
+          required: [decision, generation, epoch]
+          properties:
+            decision: {type: string}
+            generation: {type: integer, format: int64, minimum: 0, x-go-type: uint64}
+            epoch: {type: string}
+    Reservation:
+      type: object
+      additionalProperties: false
+      required: [subject, region, tier]
+      properties:
+        subject: {type: string, minLength: 1, maxLength: 128, example: user-2}
+        region: {type: string, pattern: '^[A-Z]{2}$', example: EU}
+        tier: {type: string, minLength: 1, maxLength: 32, pattern: '^[a-z]+$', example: silver}
+    Delivery:
+      type: object
+      required: [id, status, amount_cents, plugin_digest]
+      properties:
+        id: {type: string}
+        status: {type: string, enum: [pending, delivered, ineligible]}
+        amount_cents: {type: integer, format: int64, enum: [0, 100]}
+        plugin_digest: {type: string}
+    Problem:
+      type: object
+      required: [type, title, status, request_id]
+      properties:
+        type: {type: string, example: 'about:blank'}
+        title: {type: string}
+        status: {type: integer}
+        detail: {type: string}
+        request_id: {type: string}
