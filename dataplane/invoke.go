@@ -173,7 +173,7 @@ func (h *Host[T]) dispatch(ctx context.Context, span trace.Span, receipt Receipt
 	if err := h.check(ctx, v, receipt); err != nil {
 		return h.block(err)
 	}
-	if !h.callable(v, receipt, ref) {
+	if !v.callable(ref) {
 		return h.block(ErrUnauthorized)
 	}
 	*admitted = true
@@ -298,14 +298,10 @@ func (h *Host[T]) pinRef(v *authorityView, r Receipt, p decisionProof) (rollout.
 	} else if r.Lane == p.defLane {
 		ref = p.def
 	}
-	if ref.Digest != r.Digest || !h.callable(v, r, ref) {
+	if ref.Digest != r.Digest || !v.callable(ref) {
 		return rollout.Ref{}, ErrUnauthorized
 	}
 	return ref, nil
-}
-
-func (h *Host[T]) callable(v *authorityView, r Receipt, ref rollout.Ref) bool {
-	return v.callable(ref, r.SelectedAt, h.cfg.Trust.MaxLease, h.cfg.MaxClockSkew)
 }
 
 type coldResult struct {
@@ -390,7 +386,7 @@ func (h *Host[T]) prepareCold(ctx context.Context, r Receipt) coldResult {
 	if err := h.check(ctx, v, r); err != nil {
 		return coldResult{err: err}
 	}
-	if !h.callable(v, r, ref) {
+	if !v.callable(ref) {
 		return coldResult{err: ErrUnauthorized}
 	}
 	h.remember(p)

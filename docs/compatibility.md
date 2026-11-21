@@ -8,6 +8,7 @@
 | CLI and SDK | Pin `plg-registry` and the `dataplane` import to the same registry release. Use `--output json` for automation. CLI flags, JSON results, exit codes and the Go API may change before v1. |
 | Stored state | The `v1/` S3 prefix and version-1 signed records, targeting and receipts are format versions, **not** a stable SemVer promise. In one preview environment use the matching CLI, workflows, and hosts. There is no cross-release migration or downgrade guarantee. |
 | Rollout capacity | Keep preview environments small. Publication indexes and signed records have a 1 MiB record limit. Command deduplication and cold historical receipt admission can walk applied history. Large or long-lived registries are not yet qualified. |
+| Operational integration | The Floci suite runs the public CLI with separate local keys, not the hosted protected workflow. Capability-ceiling comparison is a manual pre-approval check; correctness alerts start with the host owner and require triage. |
 
 ## Trying a newer preview
 

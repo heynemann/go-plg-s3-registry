@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"regexp"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -196,6 +195,17 @@ func (s State) Quarantined(sum string) bool {
 	return false
 }
 
+// KeepsCandidate reports whether this phase retains the scoped candidate,
+// including at zero exposure. Quarantine and selectability are separate.
+func (s State) KeepsCandidate() bool {
+	switch s.Phase {
+	case "warming", "ramping", "paused", "finished":
+		return true
+	default:
+		return false
+	}
+}
+
 // Selectable reports whether a route can issue a receipt for the reference.
 func (s State) Selectable(ref Ref) bool {
 	if ref == (Ref{}) || s.Quarantined(ref.Digest) {
@@ -312,15 +322,6 @@ func keyByID(keys []Key, id string) (Key, bool) {
 		found = key
 	}
 	return found, found.PublicKey != nil
-}
-
-func pae(kind string, payload []byte) [sha256.Size]byte {
-	h := sha256.New()
-	_, _ = h.Write([]byte("DSSEv1 " + strconv.Itoa(len(kind)) + " " + kind + " " + strconv.Itoa(len(payload)) + " "))
-	_, _ = h.Write(payload)
-	var sum [sha256.Size]byte
-	h.Sum(sum[:0])
-	return sum
 }
 
 func payloadType(kind string) string {

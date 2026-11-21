@@ -11,8 +11,13 @@ import (
 
 func (s Service) leaseKey(id string) string { return s.blob("freshness", id) }
 
+// ValidLeaseLimits reports whether a lease can remain usable after clock skew.
+func ValidLeaseLimits(maxLease, skew time.Duration) bool {
+	return maxLease > 0 && skew >= 0 && skew < maxLease
+}
+
 func (s Service) leaseLimits() error {
-	if s.Trust.MaxLease <= 0 || s.MaxClockSkew < 0 || s.MaxClockSkew >= s.Trust.MaxLease {
+	if !ValidLeaseLimits(s.Trust.MaxLease, s.MaxClockSkew) {
 		return fmt.Errorf("%w: configure a positive maximum lease and a smaller nonnegative clock skew", registry.ErrInvalid)
 	}
 	return nil
@@ -174,13 +179,27 @@ func (s Service) Recover(ctx context.Context, evidence RecoveryEvidence, signer 
 }
 
 func recoveryRefs(s State) []Ref {
-	refs := make([]Ref, 0, 2)
-	if s.Default != (Ref{}) && !s.Quarantined(s.Default.Digest) {
-		refs = append(refs, s.Default)
+	// Recovery has no trusted upper bound on callers' retry horizons. Keep
+	// and verify all retained bindings in the preview, including retired
+	// releases that may still be needed by an exact historical receipt.
+	refs := make([]Ref, 0, 2+len(s.Retired))
+	seen := make(map[Ref]struct{}, cap(refs))
+	add := func(ref Ref) {
+		if ref == (Ref{}) || s.Quarantined(ref.Digest) {
+			return
+		}
+		if _, ok := seen[ref]; ok {
+			return
+		}
+		seen[ref] = struct{}{}
+		refs = append(refs, ref)
 	}
-	if s.Plan.Candidate != s.Default && !s.Quarantined(s.Plan.Candidate.Digest) &&
-		(s.Phase == "warming" || s.Phase == "paused" || s.Phase == "ramping" || s.Phase == "finished") {
-		refs = append(refs, s.Plan.Candidate)
+	add(s.Default)
+	if s.KeepsCandidate() {
+		add(s.Plan.Candidate)
+	}
+	for _, r := range s.Retired {
+		add(r.Release)
 	}
 	return refs
 }

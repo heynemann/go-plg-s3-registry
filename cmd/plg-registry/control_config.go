@@ -108,9 +108,12 @@ func (d deploymentConfig) validate(local bool) (rollout.Service, []authority, er
 	var skew time.Duration
 	if d.MaxClockSkew != "" {
 		skew, err = time.ParseDuration(d.MaxClockSkew)
-		if err != nil || skew < 0 {
-			return rollout.Service{}, nil, invalidInput("deployment max_clock_skew must be a nonnegative duration")
+		if err != nil {
+			return rollout.Service{}, nil, invalidInput("deployment max_clock_skew must be a duration")
 		}
+	}
+	if !rollout.ValidLeaseLimits(lease, skew) {
+		return rollout.Service{}, nil, invalidInput("deployment max_clock_skew must be nonnegative and smaller than max_lease")
 	}
 	if len(d.Authorities) == 0 || len(d.Authorities) > 64 {
 		return rollout.Service{}, nil, invalidInput("deployment requires between one and 64 authority bindings")

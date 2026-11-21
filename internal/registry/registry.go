@@ -11,9 +11,10 @@ import (
 	"fmt"
 	"io"
 	"slices"
-	"strconv"
 
 	"github.com/bytedance/sonic"
+
+	"github.com/heynemann/go-plg-s3-registry/internal/dsse"
 )
 
 const releaseType = "application/vnd.go-plg-s3-registry.release.v1+json"
@@ -22,7 +23,6 @@ const releaseType = "application/vnd.go-plg-s3-registry.release.v1+json"
 type Store interface {
 	Create(ctx context.Context, key string, data []byte) error
 	Open(ctx context.Context, key string) (io.ReadCloser, error)
-	List(ctx context.Context, prefix string, yield func(string) error) error
 }
 
 type indexStore interface {
@@ -67,15 +67,6 @@ type envelope struct {
 	Signatures []signature `json:"signatures"`
 }
 
-func paeDigest(payload []byte) [sha256.Size]byte {
-	h := sha256.New()
-	io.WriteString(h, "DSSEv1 "+strconv.Itoa(len(releaseType))+" "+releaseType+" "+strconv.Itoa(len(payload))+" ")
-	h.Write(payload)
-	var sum [sha256.Size]byte
-	h.Sum(sum[:0])
-	return sum
-}
-
 func (r Registry) Publish(
 	ctx context.Context, plugin, version, commit, keyID string, data []byte, sign Signer,
 ) (Release, error) {
@@ -107,7 +98,7 @@ func (r Registry) Publish(
 	if err != nil {
 		return Release{}, err
 	}
-	sum := paeDigest(payload)
+	sum := dsse.Digest(releaseType, payload)
 	sig, err := sign(ctx, sum)
 	if err != nil {
 		return Release{}, fmt.Errorf("sign release: %w", err)
@@ -117,7 +108,7 @@ func (r Registry) Publish(
 	}
 
 	if existing, ok := index.Releases[version]; ok {
-		return r.identicalPublication(ctx, release, existing)
+		return r.identicalPublication(ctx, release, payload, existing)
 	}
 	signed, err := sonic.ConfigStd.Marshal(envelope{releaseType, payload, []signature{{keyID, sig}}})
 	if err != nil {
@@ -142,7 +133,7 @@ func (r Registry) Publish(
 		latest, _, readErr := r.readIndex(ctx, plugin)
 		if readErr == nil {
 			if existing, ok := latest.Releases[version]; ok {
-				return r.identicalPublication(ctx, release, existing)
+				return r.identicalPublication(ctx, release, payload, existing)
 			}
 			if latest.RegistrationDigest != release.RegistrationDigest {
 				return Release{}, ErrDenied
@@ -153,7 +144,7 @@ func (r Registry) Publish(
 	return release, nil
 }
 
-func (r Registry) identicalPublication(ctx context.Context, candidate Release, existing admission) (Release, error) {
+func (r Registry) identicalPublication(ctx context.Context, candidate Release, payload []byte, existing admission) (Release, error) {
 	if existing.ArtifactDigest != candidate.ArtifactDigest {
 		return Release{}, ErrConflict
 	}
@@ -161,7 +152,11 @@ func (r Registry) identicalPublication(ctx context.Context, candidate Release, e
 	if err != nil {
 		return Release{}, err
 	}
-	if verified.release.SourceCommit != candidate.SourceCommit {
+	var committed envelope
+	if decodeRecord(verified.signed, &committed) != nil {
+		return Release{}, ErrCorrupt
+	}
+	if !bytes.Equal(committed.Payload, payload) {
 		return Release{}, ErrConflict
 	}
 	if err := r.verifyArtifact(ctx, existing.ArtifactDigest, verified.release.ArtifactBytes); err != nil {
@@ -176,7 +171,7 @@ func verifyRelease(data []byte, registration verifiedRegistration, policyDigest,
 		signed.Signatures[0].KeyID != registration.Publisher.KeyID {
 		return Release{}, ErrCorrupt
 	}
-	sum := paeDigest(signed.Payload)
+	sum := dsse.Digest(releaseType, signed.Payload)
 	if !ecdsa.VerifyASN1(registration.key, sum[:], signed.Signatures[0].Bytes) {
 		return Release{}, ErrCorrupt
 	}

@@ -41,6 +41,12 @@ func TestRegistryLifecycle(t *testing.T) {
 	plan := rollout.Plan{Scope: f.deployment.Scope, Candidate: f.first, Unavailable: "hold"}
 	planID, approval := f.approve(plan)
 	first := rollout.Command{ID: "initial", PlanID: planID, ApprovalID: approval, Reason: "first deployment"}
+	badClock := f.deployment
+	badClock.MaxClockSkew = badClock.MaxLease
+	validConfig := f.config
+	f.config = f.file(badClock)
+	require.Contains(t, string(f.control("decider", 2, "rollout", "activate", "--command", f.file(first))), "smaller than max_lease")
+	f.config = validConfig
 	f.control("proposer", 3, "rollout", "activate", "--command", f.file(first))
 	f.control("decider", 3, "rollout", "activate", "--command", f.file(rollout.Command{
 		ID: "unapproved-plan", PlanID: "sha256:" + strings.Repeat("b", 64), ApprovalID: approval, Reason: "approval does not match",
@@ -301,6 +307,8 @@ func (f *lifecycle) publisherLifecycle() {
 	newPublisher := f.file(registry.Publisher{Repository: "example/author", Workflow: workflow(), KeyID: "local:replacement", PublicKey: der.Bytes})
 	rotated := decodeJSON[status](f.t, f.control("publisher-admin", 0, "publisher", "rotate", "--expected", old.Revision, "--publisher", newPublisher))
 	f.publish("v3.0.0", f.secondArtifact, f.secondCommit, "author", 3)
+	// Exact archive bytes do not make a new publisher's manifest an identical retry.
+	f.publish(f.second.Version, f.secondArtifact, f.secondCommit, "replacement", 4)
 	release := f.publish("v3.0.0", f.secondArtifact, f.secondCommit, "replacement", 0)
 	require.Equal(f.t, f.second.Digest, release.Digest)
 	suspended := decodeJSON[status](f.t, f.control("publisher-admin", 0, "publisher", "suspend", "--expected", rotated.Revision))

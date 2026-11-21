@@ -45,13 +45,14 @@ type bucketFixture struct {
 }
 
 type deploymentFixture struct {
-	Schema      int                       `json:"schema_version"`
-	Scope       rollout.Scope             `json:"scope"`
-	Destination bucketFixture             `json:"destination"`
-	Publication bucketFixture             `json:"publication"`
-	MaxLease    string                    `json:"max_lease"`
-	Authorities []authorityFixture        `json:"authorities"`
-	Recovery    *rollout.RecoveryEvidence `json:"recovery,omitempty"`
+	Schema       int                       `json:"schema_version"`
+	Scope        rollout.Scope             `json:"scope"`
+	Destination  bucketFixture             `json:"destination"`
+	Publication  bucketFixture             `json:"publication"`
+	MaxLease     string                    `json:"max_lease"`
+	MaxClockSkew string                    `json:"max_clock_skew,omitempty"`
+	Authorities  []authorityFixture        `json:"authorities"`
+	Recovery     *rollout.RecoveryEvidence `json:"recovery,omitempty"`
 }
 
 type lifecycle struct {

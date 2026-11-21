@@ -9,11 +9,18 @@ groups:
         expr: sum by (registry, environment, plugin, lane) (rate(registry_host_operations_total{operation="invoke",outcome="admitted"}[5m]))
       - record: registry:initial_invocations_total:rate5m
         expr: sum without (lane) (registry:initial_invocations:rate5m)
+      - record: registry:reporter_coverage_complete
+        expr: |
+          (count by (registry, environment, plugin) (registry_host_state{state="fresh"})
+            or on (registry, environment, plugin) (0 * registry_expected_hosts))
+          == bool on (registry, environment, plugin) registry_expected_hosts
       - record: registry:initial_candidate_share:ratio5m
         expr: |
-          (sum without (lane) (registry:initial_invocations:rate5m{lane="candidate"})
+          ((sum without (lane) (registry:initial_invocations:rate5m{lane="candidate"})
             or on (registry, environment, plugin) (0 * registry:initial_invocations_total:rate5m))
-          / (registry:initial_invocations_total:rate5m > 0)
+          / (registry:initial_invocations_total:rate5m > 0))
+          and on (registry, environment, plugin) (registry:reporter_coverage_complete == 1)
+          and on (registry, environment, plugin) (min_over_time(registry:reporter_coverage_complete[5m]) == 1)
       - alert: RegistryPluginHostLag
         expr: registry:observed_generation:max > registry:effective_generation:min
         for: 2m
@@ -55,10 +62,10 @@ groups:
           sum by (registry, environment, plugin, lane) (increase(registry_host_operations_total{operation="correctness",outcome="incorrect"}[5m])) > 0
         labels:
           severity: critical
-          route: plugin
+          route: host
         annotations:
           summary: Host reported an incorrect plugin outcome
-          action: Pause progression and use the verified plugin owner, on-call route and runbook from the corresponding invocation traces.
+          action: Pause progression, triage at the host, and escalate a corroborated plugin regression using verified ownership on invocation traces.
       - alert: RegistryPluginInvocationTimeout
         expr: |
           sum by (registry, environment, plugin, lane) (increase(registry_host_operations_total{operation=~"invoke|invoke_retry",outcome="timeout"}[5m])) > 0

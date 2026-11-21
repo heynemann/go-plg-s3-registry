@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"net/url"
 	"os"
@@ -83,7 +85,24 @@ func (o *options) awsConfig(ctx context.Context) (aws.Config, error) {
 		if !loopbackEndpoint(o.endpoint) || o.account != "" {
 			return aws.Config{}, fmt.Errorf("%w: --endpoint is a loopback HTTP origin for testing and cannot be combined with --bucket-owner", registry.ErrInvalid)
 		}
-		return aws.Config{Region: o.region, Credentials: credentials.NewStaticCredentialsProvider("test", "test", "")}, nil
+		origin, _ := url.Parse(o.endpoint) // Validated above.
+		dialer := net.Dialer{Timeout: 5 * time.Second}
+		transport := &http.Transport{
+			IdleConnTimeout: 30 * time.Second,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				if addr != origin.Host {
+					return nil, errors.New("local S3 transport only dials its configured loopback origin")
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		}
+		return aws.Config{
+			Region:      o.region,
+			Credentials: credentials.NewStaticCredentialsProvider("test", "test", ""),
+			HTTPClient: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			}},
+		}, nil
 	}
 	if !accountID.MatchString(o.account) {
 		return aws.Config{}, fmt.Errorf("%w: --bucket-owner must be a 12-digit AWS account", registry.ErrInvalid)
@@ -113,7 +132,7 @@ func (b bucketLocation) store(cfg aws.Config, endpoint string) s3store.Store {
 func loopbackEndpoint(endpoint string) bool {
 	u, err := url.Parse(endpoint)
 	if err != nil || u.Scheme != "http" || u.User != nil || u.Port() == "" ||
-		u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+		u.Path != "" || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
 		return false
 	}
 	host, err := netip.ParseAddr(u.Hostname())

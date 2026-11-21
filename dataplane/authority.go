@@ -65,9 +65,9 @@ func (h *Host[T]) observe(ctx context.Context) error {
 		if d.ID != p.ID {
 			next.observedProof = makeProof(d)
 			if len(d.State.Retired) != 0 {
-				next.retired = make(map[rollout.Ref]time.Time, len(d.State.Retired))
+				next.retired = make(map[rollout.Ref]struct{}, len(d.State.Retired))
 				for _, r := range d.State.Retired {
-					next.retired[r.Release] = r.At
+					next.retired[r.Release] = struct{}{}
 				}
 			} else {
 				next.retired = nil
@@ -153,12 +153,18 @@ func (v *authorityView) permitsAssignment(r *route, ref rollout.Ref, lane Lane) 
 	return lane == CandidateLane && ref == v.observedProof.candidate && s.PlanID == r.decision.State.PlanID && s.Rung >= r.decision.State.Rung
 }
 
-func (v *authorityView) callable(ref rollout.Ref, selected time.Time, maxOldLease, skew time.Duration) bool {
+// callable checks reference membership after receipt freshness, quarantine and
+// applied-decision evidence are checked. A retirement timestamp is assigned
+// before the head CAS, so it cannot bound when the old route selected a pin.
+func (v *authorityView) callable(ref rollout.Ref) bool {
+	if ref == (rollout.Ref{}) {
+		return false
+	}
 	if ref == v.observedProof.def || ref == v.observedProof.candidate {
 		return true
 	}
-	at, found := v.retired[ref]
-	return found && !selected.After(at.Add(maxOldLease).Add(skew))
+	_, found := v.retired[ref]
+	return found
 }
 
 func revisionOf(d rollout.Decision) Revision {

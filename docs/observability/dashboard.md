@@ -4,6 +4,8 @@ Give each host process an explicit OpenTelemetry meter and tracer provider. Expo
 
 Use the [reference Prometheus rules](prometheus.yml) with exporters that translate OTLP instrument names to Prometheus names using underscore separators, `_total` for counters, and `_seconds` for durations. Preserve the unitless gauge names as shown. Compare only live, distinct reporters. Every dashboard row is grouped by `registry`, `environment`, `plugin`; add `instance` only for host diagnosis. Treat an empty series, missing instance, or absent call sample as **unknown**, not zero exposure or success.
 
+Publish one `registry_expected_hosts` gauge per `(registry, environment, plugin)` from deployment inventory. Scope scraping to that same inventory and preserve distinct reporters. The candidate-share rule emits no result without expected reporter coverage; leave the panel as **unknown** while collecting its initial five-minute window. The inventory count is not emitted by the SDK.
+
 | Panel | Series or PromQL |
 | --- | --- |
 | Desired, observed, effective generations | `registry_host_revision`, split by `stage`; cross-check desired against `plg-registry status` for the primary. The SDK's desired generation is the latest this host observed, not a global value. Compare reporting hosts by instance and use `registry:observed_generation:max` against `registry:effective_generation:min`. |
@@ -21,6 +23,8 @@ Use the [reference Prometheus rules](prometheus.yml) with exporters that transla
 Use an Alertmanager receiver or trusted routing service with a deployment-controlled mapping keyed by `(registry, environment, plugin, route)`. A `route: host` event goes to the host on-call, `route: plugin` to the registered plugin on-call, and `route: registry` to registry operations. A missing mapping routes to the registry operator rather than discarding the alert. Do not generate routes from guest inputs, arbitrary error strings, or the plugin archive's declared owner.
 
 Group Alertmanager notifications by `registry`, `environment`, `plugin` and `route`; keep concurrent alerts for the same affected operation together without joining different owner routes. Include the relevant alert action and evidence window in the notification.
+
+`ReportCorrectness` is a host signal, not a diagnosis. The reference alert pages the host owner first. If the incident is confirmed to be a plugin regression, use the verified plugin owner and on-call route on the corresponding invocation traces. The preview does not classify cause automatically.
 
 Follow the alert's action and correlate spans by scope, time, lane and operation. Registry invocation spans carry exact decision, digest and host identifiers, host/registry owner, and registry-verified plugin owner, on-call route and runbook on admitted calls. Compare requested and previous effective state without widening traffic. Quarantine a digest for containment; pause when evidence is incomplete. Telemetry does not grant authority, automatically advance rollout, or guarantee that every host saw a decision.
 

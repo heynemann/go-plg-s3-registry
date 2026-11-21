@@ -64,9 +64,14 @@ func TestRewardsExample(t *testing.T) {
 	require.Contains(t, conflict.media, "application/problem+json")
 
 	rolled := f.execute("responder", "rollout", "rollback", rollout.Command{ID: "rollback-v2", Expected: advanced.DecisionID, Reason: "return new deliveries to baseline", Incident: "demo-1"})
-	f.renew()
 	host.stop()
 	host = f.startRewards(binary, db)
+	failed := host.do("POST", "/v1/deliveries/retry-after-restart/attempt", "", http.StatusServiceUnavailable)
+	require.Equal(t, "urn:rewards:stale", decodeJSON[struct {
+		Type string `json:"type"`
+	}](t, failed.body).Type)
+	host.delivery("GET", "retry-after-restart", "", 200, "pending", f.second.Digest, 0)
+	f.renew()
 	host.ready(rolled.DecisionID)
 	host.delivery("GET", "first", "", 200, "ineligible", f.first.Digest, 0)
 	host.delivery("GET", "retry-after-restart", "", 200, "pending", f.second.Digest, 0)

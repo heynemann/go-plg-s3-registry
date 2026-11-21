@@ -268,8 +268,7 @@ func (s Service) transition(ctx context.Context, current State, cmd Command, exe
 			next.Default = Ref{}
 			next.Phase, next.Rung = "rolled-back", 0
 		}
-		if next.Plan.Candidate.Digest == cmd.Digest &&
-			(next.Phase == "warming" || next.Phase == "ramping" || next.Phase == "paused" || next.Phase == "finished") {
+		if next.KeepsCandidate() && next.Plan.Candidate.Digest == cmd.Digest {
 			next.Phase, next.Rung = "rolled-back", 0
 		}
 		next.Denied = slices.DeleteFunc(slices.Clone(current.Denied), func(sum string) bool { return sum == cmd.Digest })

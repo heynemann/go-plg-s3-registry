@@ -9,6 +9,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/heynemann/go-plg-s3-registry/internal/dsse"
 	"github.com/heynemann/go-plg-s3-registry/internal/registry"
 )
 
@@ -65,7 +66,7 @@ func seal(ctx context.Context, ident Identity, key Key, kind string, value any) 
 		return nil, err
 	}
 	kind = payloadType(kind)
-	sum := pae(kind, payload)
+	sum := dsse.Digest(kind, payload)
 	sig, err := ident.Sign(ctx, sum)
 	if err != nil {
 		return nil, fmt.Errorf("sign protocol record: %w", err)
@@ -86,7 +87,7 @@ func openSigned(data []byte, keys []Key, kind string, out any) (Key, error) {
 	if !ok {
 		return Key{}, registry.ErrCorrupt
 	}
-	sum := pae(e.Type, e.Payload)
+	sum := dsse.Digest(e.Type, e.Payload)
 	if !ecdsa.VerifyASN1(key.PublicKey, sum[:], sig.Signature) || decode(e.Payload, out) != nil {
 		return Key{}, registry.ErrCorrupt
 	}
@@ -273,10 +274,15 @@ func independent(a, b Key) bool {
 	return a.PublicKey != nil && b.PublicKey != nil && a.ID != b.ID && a.Principal != b.Principal && !a.PublicKey.Equal(b.PublicKey)
 }
 
+func responderAction(action string) bool {
+	return action == "rollback" || action == "pause" || action == "quarantine"
+}
+
 func (s Service) decisionKeys(action string) []Key {
-	switch action {
-	case "rollback", "pause", "quarantine":
+	if responderAction(action) {
 		return s.Trust.Responders
+	}
+	switch action {
 	case "recover":
 		return s.Trust.Recoverers
 	default:
@@ -328,6 +334,9 @@ func (s Service) readHead(ctx context.Context, scope Scope) (Decision, string, e
 	if d.Scope != scope || d.Generation != h.Generation {
 		return Decision{}, "", registry.ErrCorrupt
 	}
+	if err := s.walk(ctx, d, nil); err != nil {
+		return Decision{}, "", err
+	}
 	return d, etag, nil
 }
 
@@ -346,7 +355,10 @@ func (s Service) History(ctx context.Context) ([]Decision, error) {
 	}
 	var history []Decision
 	err = s.walk(ctx, start, func(d Decision) bool { history = append(history, d); return true })
-	return history, err
+	if err != nil {
+		return nil, err
+	}
+	return history, nil
 }
 
 func (s Service) Decision(ctx context.Context, id string) (Decision, error) {
@@ -385,16 +397,29 @@ func (s Service) findDecision(ctx context.Context, id string, start Decision) (D
 		}
 		return true
 	})
-	if err == nil && found.ID == "" {
-		err = registry.ErrNotFound
+	if err != nil {
+		return Decision{}, err
 	}
-	return found, err
+	if found.ID == "" {
+		return Decision{}, registry.ErrNotFound
+	}
+	return found, nil
 }
 
+// A nil or stopped visitor only verifies a contiguous responder suffix. A
+// responder snapshot derives authority from its predecessor all the way back
+// to a non-responder decision; a normal poll need not read beyond that anchor.
 func (s Service) walk(ctx context.Context, start Decision, visit func(Decision) bool) error {
 	for d := start; ; {
-		if !visit(d) || d.Previous == "" {
+		if visit != nil && !visit(d) {
+			visit = nil
+		}
+		responder := responderAction(d.Command.Action)
+		if !responder && (visit == nil || d.Previous == "") {
 			return nil
+		}
+		if responder && d.Previous == "" {
+			return registry.ErrCorrupt
 		}
 		prev, err := s.loadDecision(ctx, d.Previous)
 		if errors.Is(err, registry.ErrNotFound) {
@@ -403,11 +428,38 @@ func (s Service) walk(ctx context.Context, start Decision, visit func(Decision) 
 		if err != nil {
 			return err
 		}
-		if prev.Generation != d.Generation-1 || (prev.Scope.Epoch != d.Scope.Epoch && d.Command.Action != "recover") {
+		if responder {
+			if !s.validResponderSnapshot(ctx, d, prev) {
+				return registry.ErrCorrupt
+			}
+		} else if prev.Generation != d.Generation-1 || (prev.Scope != d.Scope && d.Command.Action != "recover") {
 			return registry.ErrCorrupt
 		}
 		d = prev
 	}
+}
+
+func (s Service) validResponderSnapshot(ctx context.Context, d, prev Decision) bool {
+	if !responderAction(d.Command.Action) || d.Command.validate() != nil ||
+		d.Command.Expected != d.Previous || d.Previous != prev.ID ||
+		d.Scope != prev.Scope || prev.Generation != d.Generation-1 || d.At.Before(prev.At) {
+		return false
+	}
+	// The signature has already been verified with the responder key in
+	// loadDecision. These incident transitions need no key or external I/O.
+	next, err := s.transition(ctx, prev.State, d.Command, Key{}, d.Provenance)
+	if err != nil {
+		return false
+	}
+	trackRetirement(&next, prev.State, d.At)
+	// Compare the entire canonical snapshot, including the plan, deny set,
+	// and retirement history, not just the fields this action may change.
+	want, err := encode(next)
+	if err != nil {
+		return false
+	}
+	got, err := encode(d.State)
+	return err == nil && bytes.Equal(got, want)
 }
 
 func (s Service) commit(ctx context.Context, d Decision, etag string, ident Identity, key Key) (Decision, error) {

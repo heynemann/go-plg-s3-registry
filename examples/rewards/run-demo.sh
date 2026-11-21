@@ -233,12 +233,7 @@ activate initial '' 1 serving
 registry --config "$config" status | jq -e --arg decision "$decision" \
   '.decision.decision_id == $decision and .freshness == "unavailable"' >/dev/null
 wait_ready 503
-short_expiry=$(renew 10s)
-printf 'Short lease expires at %s\n' "$short_expiry"
-wait_ready 200 "$decision"
-wait_ready 503 "$decision"
-long_expiry=$(renew 10m)
-printf 'Expired: /readyz returned 503. Renewed until %s\n' "$long_expiry"
+renew 10m >/dev/null
 wait_ready 200 "$decision"
 
 say 'Warm v2 at 0%; EU silver still uses v1'
@@ -263,7 +258,8 @@ printf '%s\n' '{"region":"EU"}' >"$work/eu.json"
 jq -n --arg expected "$decision" --arg approval "$approval_id" --arg evidence "$evidence" \
   '{id:"rung-25",expected:$expected,approval_id:$approval,reason:"observed warm host",rung:2500,evidence:[$evidence]}' >"$command_file"
 apply decider rollout advance 3 ramping 2500
-renew 10m >/dev/null
+short_expiry=$(renew 10s)
+printf 'Short candidate lease expires at %s\n' "$short_expiry"
 wait_ready 200 "$decision"
 reserve ramp-us US "$first"
 attempt ramp-us ineligible 0 "$first"
@@ -272,6 +268,13 @@ put_delivery 200 eu-pinned EU
 assert_delivery eu-pinned pending 0 "$second"
 put_delivery 409 eu-pinned US
 reserve eu-blocked EU "$second"
+
+say 'Let the proof expire and attempt the pinned EU delivery'
+wait_ready 503 "$decision"
+expect_http 503 POST /v1/deliveries/eu-pinned/attempt
+jq -e '.type == "urn:rewards:stale"' "$response" >/dev/null
+expect_http 200 GET /v1/deliveries/eu-pinned
+assert_delivery eu-pinned pending 0 "$second"
 
 say 'Roll back and restart rewards on the same SQLite file'
 jq -n --arg expected "$decision" '{id:"rollback",expected:$expected,incident:"demo-1",reason:"return to v1"}' >"$command_file"

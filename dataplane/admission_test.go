@@ -62,14 +62,13 @@ func TestLaggingRouteIntersectsLatestAuthority(t *testing.T) {
 	plan := rollout.Plan{Baseline: baseline, Candidate: candidate}
 	old := rollout.Decision{State: rollout.State{Plan: plan, PlanID: "old", Phase: "ramping", Rung: 500, Default: baseline}}
 	effective := &route{decision: old, proof: makeProof(old)}
-	now := time.Now()
 	rollback := rollout.Decision{State: rollout.State{Plan: plan, PlanID: "old", Phase: "rolled-back", Default: baseline}}
-	v := &authorityView{observed: rollback, observedProof: makeProof(rollback), retired: map[rollout.Ref]time.Time{candidate: now}}
+	v := &authorityView{observed: rollback, observedProof: makeProof(rollback), retired: map[rollout.Ref]struct{}{candidate: {}}}
 	if !v.permitsAssignment(effective, baseline, BaselineLane) || v.permitsAssignment(effective, candidate, CandidateLane) {
 		t.Fatal("observed rollback must stop assignment to the candidate before effective cutover")
 	}
-	if !v.callable(candidate, now.Add(-time.Minute), time.Minute, 0) || v.callable(candidate, now.Add(time.Minute+time.Nanosecond), time.Minute, 0) {
-		t.Fatal("rollback must preserve true historical pins, not assign the retired digest indefinitely")
+	if !v.callable(candidate) || v.callable(rollout.Ref{Version: "other", Digest: candidate.Digest}) {
+		t.Fatal("rollback must preserve the exact retired binding, not just its digest")
 	}
 	v.denied = mergeDenies(v.denied, []string{baseline.Digest})
 	if v.permitsAssignment(effective, baseline, BaselineLane) {
@@ -78,6 +77,41 @@ func TestLaggingRouteIntersectsLatestAuthority(t *testing.T) {
 	v.denied = mergeDenies(v.denied, nil)
 	if !v.quarantined(baseline.Digest) {
 		t.Fatal("a restoration without matching freshness must not remove local denies")
+	}
+}
+
+func TestRetirementTimestampDoesNotExpireLivePin(t *testing.T) {
+	at := time.Now().UTC()
+	maxLease := time.Minute
+	// The rollback CAS was delayed while the previous decision could still
+	// be renewed and used for selection.
+	selected := at.Add(2 * maxLease)
+	now := selected.Add(time.Second)
+	candidate := rollout.Ref{Version: "candidate", Digest: "sha256:" + strings.Repeat("a", 64)}
+	previous := rollout.Decision{ID: "sha256:" + strings.Repeat("b", 64), Generation: 2, At: at.Add(-maxLease),
+		Scope: rollout.Scope{Epoch: "initial"},
+		State: rollout.State{Plan: rollout.Plan{Candidate: candidate}, Phase: "ramping", Rung: 500}}
+	pin := Receipt{Epoch: previous.Scope.Epoch, Digest: candidate.Digest, Generation: previous.Generation,
+		Decision: previous.ID, SelectedAt: selected, Lane: CandidateLane}
+	v := &authorityView{
+		observed: rollout.Decision{Generation: 3, At: at, State: rollout.State{
+			Phase: "rolled-back", Retired: []rollout.Retired{{Release: candidate, At: at}},
+		}},
+		retired: map[rollout.Ref]struct{}{candidate: {}},
+		proof: lease{generation: 3, deadline: now.Add(maxLease),
+			monotonic: time.Now().Add(maxLease), expired: new(atomic.Bool)},
+	}
+	h := &Host[any]{cfg: Config{Now: func() time.Time { return now }, RetryHorizon: time.Hour,
+		Trust: rollout.Trust{MaxLease: maxLease}}}
+	if err := h.check(context.Background(), v, pin); err != nil {
+		t.Fatalf("live receipt rejected: %v", err)
+	}
+	if ref, err := h.pinRef(v, pin, makeProof(previous)); err != nil || ref != candidate {
+		t.Fatalf("pinRef: got (%v, %v), want (%v, nil)", ref, err, candidate)
+	}
+	v.denied = map[string]struct{}{candidate.Digest: {}}
+	if err := h.check(context.Background(), v, pin); !errors.Is(err, ErrQuarantined) {
+		t.Fatalf("quarantined receipt: got %v, want %v", err, ErrQuarantined)
 	}
 }
 

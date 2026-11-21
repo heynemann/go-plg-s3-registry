@@ -83,7 +83,7 @@ type route struct {
 type authorityView struct {
 	observed      rollout.Decision
 	observedProof decisionProof
-	retired       map[rollout.Ref]time.Time
+	retired       map[rollout.Ref]struct{}
 	effective     *route
 	proof         lease               // last independently verified proof, even if warming failed
 	denied        map[string]struct{} // includes unproven restorations until a current proof arrives
@@ -170,7 +170,7 @@ func pinnedTrust(trust Trust) Trust {
 	return trust
 }
 
-// readonlyStore intentionally has no working write or list method, even if a
+// readonlyStore intentionally has no working write method, even if a
 // misconfigured deployment supplies a client with broader S3 credentials.
 type readonlyStore struct{ store s3store.Store }
 
@@ -182,9 +182,6 @@ func (s readonlyStore) Read(ctx context.Context, key string) (io.ReadCloser, str
 }
 func (readonlyStore) Create(context.Context, string, []byte) error { return registry.ErrDenied }
 func (readonlyStore) CompareAndSwap(context.Context, string, string, []byte) error {
-	return registry.ErrDenied
-}
-func (readonlyStore) List(context.Context, string, func(string) error) error {
 	return registry.ErrDenied
 }
 
@@ -220,7 +217,7 @@ func (c *Config) settle() error {
 		c.PollInterval = 5 * time.Second
 	}
 	if c.RetryHorizon <= 0 || c.RetentionMargin < 0 || c.RetryHorizon+c.RetentionMargin < c.RetryHorizon ||
-		c.Trust.MaxLease <= 0 || c.MaxClockSkew < 0 || c.MaxClockSkew >= c.Trust.MaxLease ||
+		!rollout.ValidLeaseLimits(c.Trust.MaxLease, c.MaxClockSkew) ||
 		c.SyncTimeout < 0 || c.PollInterval < 0 {
 		return errors.New("dataplane: invalid clock, freshness, retry or sync bounds")
 	}

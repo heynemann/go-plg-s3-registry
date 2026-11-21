@@ -76,21 +76,3 @@ func (s Store) Read(ctx context.Context, key string) (io.ReadCloser, string, err
 	}
 	return result.Body, etag, nil
 }
-
-func (s Store) List(ctx context.Context, prefix string, yield func(string) error) error {
-	pages := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: s.bucket, Prefix: &prefix, ExpectedBucketOwner: s.owner,
-	}, func(options *s3.ListObjectsV2PaginatorOptions) { options.StopOnDuplicateToken = true })
-	for pages.HasMorePages() {
-		page, err := pages.NextPage(ctx)
-		if err != nil {
-			return fmt.Errorf("list S3 objects: %w", err)
-		}
-		for _, object := range page.Contents {
-			if err = yield(aws.ToString(object.Key)); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}

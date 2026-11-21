@@ -117,11 +117,8 @@ func (h *Host[T]) publishStorage() {
 func required(d rollout.Decision, denied map[string]struct{}) [2]rollout.Ref {
 	s := d.State
 	refs := [2]rollout.Ref{s.Default}
-	switch s.Phase {
-	case "warming", "ramping", "paused", "finished":
-		if s.Plan.Candidate != s.Default {
-			refs[1] = s.Plan.Candidate
-		}
+	if s.KeepsCandidate() && s.Plan.Candidate != s.Default {
+		refs[1] = s.Plan.Candidate
 	}
 	for i, ref := range refs {
 		if _, blocked := denied[ref.Digest]; blocked {
