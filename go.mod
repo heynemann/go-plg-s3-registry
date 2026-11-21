@@ -16,7 +16,7 @@ require (
 	github.com/aws/smithy-go v1.28.9
 	github.com/bytedance/sonic v1.15.5
 	github.com/getkin/kin-openapi v0.142.0
-	github.com/heynemann/go-plg v0.0.0-20261110221856-eed62cdec1bc
+	github.com/heynemann/go-plg v0.1.0
 	github.com/moby/moby/api v1.56.1
 	github.com/oapi-codegen/runtime v1.8.0
 	github.com/spf13/cobra v1.10.2

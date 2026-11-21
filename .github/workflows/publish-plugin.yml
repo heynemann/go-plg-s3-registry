@@ -63,7 +63,7 @@ jobs:
           PLUGIN_DIR: ${{ inputs.directory }}
         run: |
           set -euo pipefail
-          GOBIN="$RUNNER_TEMP" go install github.com/heynemann/go-plg/cmd/plg@v0.0.0-20261110221856-eed62cdec1bc
+          GOBIN="$RUNNER_TEMP" go install github.com/heynemann/go-plg/cmd/plg@v0.1.0
           cd "$GITHUB_WORKSPACE/author"
           plugin_dir=$(realpath -- "$PLUGIN_DIR")
           case "$plugin_dir" in "$PWD"|"$PWD/"*) ;; *) echo 'Plugin directory must be inside the author checkout' >&2; exit 1;; esac

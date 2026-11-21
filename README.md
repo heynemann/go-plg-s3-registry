@@ -40,10 +40,10 @@ The integration suite starts isolated, digest-pinned Floci containers, packs rea
 
 ## Author a plugin
 
-Use the pinned go-plg tool from this module to install the author CLI:
+For this checkout, install the author CLI at the same go-plg version the host SDK uses:
 
 ```sh
-go install github.com/heynemann/go-plg/cmd/plg@v0.0.0-20261110221856-eed62cdec1bc
+go install github.com/heynemann/go-plg/cmd/plg@v0.1.0
 ```
 
 From your author repository, use `plg init -lang lua -implements '<package>.<Interface>@<version>' <directory>` with your published contract. Implement the scaffold, add method cases under the plugin's `tests` directory, and run `plg validate <directory>`. Validation prints failing steps and cases. Commit the plugin and its tests before publishing. Run `plg pack -o /path/outside/author-repo <directory>`; pack validates and runs the tests itself, then writes a `.plg`. The registry requires a clean source revision and at least one passing author test in pack's report. Don't publish a working-tree build.
