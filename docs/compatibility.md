@@ -2,6 +2,8 @@
 
 **`v0.1.1` is a developer preview, not a production-ready `v1.0.0`.** Use disposable Floci environments and synthetic workloads. The release tests cover the published CLI, the registry lifecycle and real rewards HTTP invocations. The separate [AWS production conformance gate (#15)](https://github.com/heynemann/go-plg-s3-registry/issues/15) has not been run. AWS and GitHub integrations are included for evaluation; the preview does not certify AWS IAM, KMS, S3 durability or recovery, or support arbitrary S3-compatible providers.
 
+This branch pins both the host runtime and author CLI to [`go-plg v0.1.0`](https://github.com/heynemann/go-plg/releases/tag/v0.1.0). That tag points to the same commit used by registry `v0.1.1`; the published registry preview and its dependency metadata are unchanged.
+
 | Surface | `v0.1.1` expectation |
 | --- | --- |
 | Go toolchain and go-plg | Go 1.27, tested with Go 1.27.3. Both the author CLI and host runtime are tested with `github.com/heynemann/go-plg` at `v0.0.0-20261110221856-eed62cdec1bc`. Other revisions have not been validated. Check the version selected by your host module, not just the version declared here. |
