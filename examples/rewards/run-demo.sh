@@ -59,7 +59,8 @@ if [[ -z "$registry_bin" ]]; then
   registry_bin="$work/plg-registry"
   go build -o "$registry_bin" ./cmd/plg-registry
 fi
-go build -o "$work/rewards" ./examples/rewards/cmd/rewards
+# The host uses the offline fixture contract, not a published registry module as its contract version.
+go build -buildvcs=false -o "$work/rewards" ./examples/rewards/cmd/rewards
 go run ./examples/rewards/cmd/pack --out "$work" >"$work/pack.json"
 
 say 'Start pinned Floci on a Docker-assigned loopback port'

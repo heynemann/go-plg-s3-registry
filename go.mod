@@ -4,6 +4,8 @@ go 1.27
 
 toolchain go1.27.3
 
+retract v0.1.0 // The example cannot warm its offline contract from a tagged checkout. Use v0.1.1.
+
 require (
 	github.com/aws/aws-sdk-go-v2 v1.48.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
