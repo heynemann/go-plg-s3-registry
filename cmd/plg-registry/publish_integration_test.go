@@ -34,11 +34,13 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/mod/module"
 	"golang.org/x/mod/zip"
+
+	"github.com/heynemann/go-plg-s3-registry/internal/testcontract"
 )
 
 const (
 	flociImage   = "floci/floci@sha256:a0fbf944d7f338cc0856f1ef83831ea749ff2be71956eb7a7fce08fc21458e19"
-	contractPath = "example.com/registry-test"
+	contractPath = "github.com/heynemann/go-plg-s3-registry/internal/testcontract"
 	bucket       = "registry-integration"
 )
 
@@ -82,7 +84,7 @@ func TestPublishRelease(t *testing.T) {
 	require.Contains(t, fail(2, publish(artifact, conflictingCommit, priv)...), "clean checkout")
 	objects, err := s3client.ListObjectsV2(t.Context(), &s3.ListObjectsV2Input{Bucket: aws.String(bucket)})
 	require.NoError(t, err)
-	require.Len(t, objects.Contents, 1, "refused publication must not write bytes")
+	require.Len(t, objects.Contents, 2, "refused publication must not write bytes")
 
 	first := invoke(publish(artifact, commit, priv)...)
 	require.JSONEq(t, string(first), string(invoke(publish(artifact, commit, priv)...)))
@@ -121,8 +123,17 @@ func TestPublishRelease(t *testing.T) {
 		keys = append(keys, aws.ToString(object.Key))
 	}
 	artifactKey := "v1/demo/artifacts/" + release.Digest + ".plg"
-	releaseKey := "v1/demo/plugins/eligibility/releases/v1.0.0.json"
-	require.ElementsMatch(t, []string{artifactKey, releaseKey, "v1/demo/plugins/eligibility/registration.json"}, keys,
+	var index struct {
+		Registration string `json:"registration_digest"`
+		Releases map[string]struct {
+			Envelope string `json:"envelope_digest"`
+		} `json:"releases"`
+	}
+	prefix := "v1/demo/plugins/eligibility/"
+	indexKey := prefix + "index.json"
+	require.NoError(t, sonic.ConfigStd.Unmarshal(objectBytes(t, s3client, indexKey), &index))
+	releaseKey := prefix + "releases/" + index.Releases["v1.0.0"].Envelope + ".json"
+	require.ElementsMatch(t, []string{artifactKey, releaseKey, indexKey, prefix+"registrations/"+index.Registration+".json"}, keys,
 		"publication must not create an active plan or mutate the registration")
 	require.Equal(t, content, objectBytes(t, s3client, artifactKey))
 	// Preserve well-formed DSSE but alter the signed payload; inspect must refuse it.
@@ -220,14 +231,9 @@ func authorWorkflow(t *testing.T, dir, plg string) (first, commit, second, newCo
 	}
 	goMod := []byte("module " + contractPath + "\n\ngo 1.27\n")
 	require.NoError(t, os.WriteFile(filepath.Join(src, "go.mod"), goMod, 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(src, "contract.go"), []byte(`package contract
-
-import "context"
-
-type Rule interface {
-	Accept(ctx context.Context, value string) (bool, error)
-}
-`), 0o600))
+	code, err := testcontract.Source.ReadFile("contract.go")
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(src, "contract.go"), code, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.mod"), goMod, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(versionDir, "v1.0.0.info"), []byte(`{"Version":"v1.0.0","Time":"2020-01-01T00:00:00Z"}`), 0o600))
 	archive, err := os.Create(filepath.Join(versionDir, "v1.0.0.zip"))
@@ -245,19 +251,19 @@ type Rule interface {
 	run(t, author, env, plg, "init", "-lang", "lua", "-implements", contractPath+".Rule@v1.0.0", "eligibility")
 	plugin := filepath.Join(author, "eligibility")
 	sourceFile := filepath.Join(plugin, "plugin.lua")
-	writeSource := func(suffix string) {
+	writeSource := func(accept string) {
 		t.Helper()
 		code := `local Rule = {}
 function Rule:Accept(value)
-  return value == "gold"
+  return ` + accept + `
 end
 function Create()
   return setmetatable({}, { __index = Rule })
 end
-` + suffix
+`
 		require.NoError(t, os.WriteFile(sourceFile, []byte(code), 0o600))
 	}
-	writeSource("")
+	writeSource(`value == "gold"`)
 	require.NoError(t, os.WriteFile(filepath.Join(plugin, "tests", "example.yaml"), []byte(`cases:
   - name: accepts gold
     call: Accept
@@ -300,7 +306,7 @@ owner:
 	}
 	run(t, author, env, plg, "validate", "-color", "never", "eligibility")
 	first, commit = pack("first")
-	writeSource("-- a different packaged revision\n")
+	writeSource(`value == "gold" or value == "silver"`)
 	second, newCommit = pack("second")
 	return first, commit, second, newCommit
 }

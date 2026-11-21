@@ -26,7 +26,7 @@ const (
 var (
 	ErrInvalid  = errors.New("invalid registry input")
 	ErrDenied   = errors.New("publisher not authorized")
-	ErrConflict = errors.New("immutable record already exists")
+	ErrConflict = errors.New("immutable binding or expected publisher revision conflict")
 	ErrNotFound = errors.New("registry record not found")
 	ErrCorrupt  = errors.New("registry record failed verification")
 
@@ -51,6 +51,8 @@ type Registration struct {
 	Schema    int       `json:"schema_version"`
 	Registry  string    `json:"registry"`
 	Plugin    string    `json:"plugin"`
+	Revision  uint64    `json:"revision"`
+	Suspended bool      `json:"suspended"`
 	Owner     string    `json:"owner"`
 	OnCall    string    `json:"on_call"`
 	Runbook   string    `json:"runbook"`
@@ -74,6 +76,8 @@ type Release struct {
 	Contract           Contract `json:"contract"`
 	Capabilities       Requests `json:"requested_capabilities"`
 	Evidence           Evidence `json:"evidence"`
+	OnCall             string   `json:"-"`
+	Runbook            string   `json:"-"`
 }
 
 type Contract struct {
@@ -135,14 +139,13 @@ func validWorkflow(p Publisher) bool {
 		(strings.HasSuffix(file, ".yml") || strings.HasSuffix(file, ".yaml")) && commitPattern.MatchString(rev)
 }
 
-func (r Registration) check() error {
+func (r Registration) check() (*ecdsa.PublicKey, error) {
 	u, err := url.Parse(r.Runbook)
-	if !idPattern.MatchString(r.Plugin) || !idPattern.MatchString(r.Owner) || !idPattern.MatchString(r.OnCall) ||
+	if r.Revision == 0 || !idPattern.MatchString(r.Plugin) || !idPattern.MatchString(r.Owner) || !idPattern.MatchString(r.OnCall) ||
 		err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || len(r.Runbook) > 2048 {
-		return fmt.Errorf("%w: expected plugin, owner, on-call IDs and an HTTPS runbook", ErrInvalid)
+		return nil, fmt.Errorf("%w: expected plugin, owner, on-call IDs and an HTTPS runbook", ErrInvalid)
 	}
-	_, err = r.Publisher.key()
-	return err
+	return r.Publisher.key()
 }
 
 // decodeRecord requires exactly the wire form emitted by v1. This refuses
@@ -158,37 +161,36 @@ func decodeRecord[T any](data []byte, dest *T) error {
 	return nil
 }
 
-func fromArtifact(data []byte, sourceCommit, version string) (Release, error) {
+func parseArtifact(data []byte, sourceCommit, version string) (Release, *plg.Artifact, error) {
 	if len(data) == 0 || len(data) > MaxArtifactBytes || !commitPattern.MatchString(sourceCommit) {
-		return Release{}, fmt.Errorf("%w: expected a bounded .plg archive and a full source commit", ErrInvalid)
+		return Release{}, nil, fmt.Errorf("%w: expected a bounded .plg archive and a full source commit", ErrInvalid)
 	}
 	archive, err := plg.OpenArtifact(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return Release{}, fmt.Errorf("%w: invalid .plg archive; rebuild with plg pack", ErrInvalid)
+		return Release{}, nil, fmt.Errorf("%w: invalid .plg archive; rebuild with plg pack", ErrInvalid)
 	}
 	manifest, err := archive.ReadFile("plugin.yaml")
 	if err != nil {
-		return Release{}, fmt.Errorf("%w: missing plugin.yaml", ErrInvalid)
+		return Release{}, nil, fmt.Errorf("%w: missing plugin.yaml", ErrInvalid)
 	}
 	desc, err := plg.ParseManifest(manifest)
 	if err != nil || (desc.Version != "" && desc.Version != version) {
-		return Release{}, fmt.Errorf("%w: plugin.yaml is invalid or its version disagrees with the release", ErrInvalid)
+		return Release{}, nil, fmt.Errorf("%w: plugin.yaml is invalid or its version disagrees with the release", ErrInvalid)
 	}
 	provenance := archive.Provenance()
 	if provenance.Commit != sourceCommit || provenance.Dirty || provenance.Contract.Path == "" ||
 		provenance.Contract.Version == "" || provenance.PlgVersion == "" {
-		return Release{}, fmt.Errorf("%w: pack a clean checkout of the stated source commit against a pinned contract", ErrInvalid)
+		return Release{}, nil, fmt.Errorf("%w: pack a clean checkout of the stated source commit against a pinned contract", ErrInvalid)
 	}
 	tests, err := passedTests(provenance.Report)
 	if err != nil {
-		return Release{}, err
+		return Release{}, nil, err
 	}
 	return Release{
-		ArtifactDigest: digest(data), ArtifactBytes: int64(len(data)), SourceCommit: sourceCommit,
 		Contract:     Contract{desc.Implements, provenance.Contract.Path, provenance.Contract.Version},
 		Capabilities: Requests{Secrets: desc.Secrets, MemoryBytes: desc.MemoryLimit},
 		Evidence:     Evidence{provenance.PlgVersion, digest(provenance.Report), tests},
-	}, nil
+	}, archive, nil
 }
 
 func passedTests(data []byte) (int, error) {
